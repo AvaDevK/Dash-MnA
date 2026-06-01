@@ -12,16 +12,33 @@ This dashboard handles Avalara M&A Jira data. The deployment is gated by HTTP Ba
 
 ### 1. Push to GitHub
 
-Make sure the repo `https://github.com/AvaDevK/Dash-MnA` exists on GitHub (Private). If it doesn't, create it on github.com → New repository → name `Dash-MnA`, Private, no README/`.gitignore`/license (we already have them locally).
+The `gh` CLI is bundled at `~/.local/share/dashboard-mna/bin/gh`. Easiest path is to auth gh once, which sets up git's credential helper automatically.
 
-Then from this project folder:
+In **your own terminal** (Terminal.app or the Cursor terminal), run:
 
 ```bash
-git remote add origin https://github.com/AvaDevK/Dash-MnA.git
+cd "/Users/deveshkumar.sharma/Library/CloudStorage/OneDrive-Avalara/Documents/Projects/Dashboard-MNA"
+export PATH="$HOME/.local/share/dashboard-mna/bin:$PATH"
+
+# Auth gh — opens browser, takes ~30 sec
+gh auth login -p https -w
+
+# Wire gh as git's credential helper
+gh auth setup-git
+
+# Create the private repo on GitHub AND push in one step
+gh repo create AvaDevK/Dash-MnA --private --source=. --push
+```
+
+If `gh repo create` complains that the `origin` remote already exists, run `git remote remove origin` first and rerun the create.
+
+Alternative (no gh): create the repo manually on https://github.com/new (Private), then:
+
+```bash
 git push -u origin main
 ```
 
-If `git push` asks for credentials, use a [GitHub Personal Access Token](https://github.com/settings/tokens?type=beta) (fine-grained, scoped to this repo, with `Contents: Read and write`) as the password.
+…and use a [GitHub Personal Access Token](https://github.com/settings/tokens?type=beta) (fine-grained, repo `Contents: Read and write`) as the password when prompted.
 
 ### 2. Connect to Vercel
 

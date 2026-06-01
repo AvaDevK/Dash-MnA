@@ -4,11 +4,11 @@ Local React + Vite app for the M&A RI dashboard.
 
 ## Run locally
 
-Node.js + npm are not installed system-wide on this machine, so a portable Node is bootstrapped into `.tooling/`.
+Node.js + npm are not installed system-wide on this machine, so portable Node + the GitHub CLI live at `~/.local/share/dashboard-mna/bin/` (outside OneDrive — OneDrive prunes binaries from project folders).
 
 ```bash
 # from project root, every new terminal:
-export PATH="$PWD/.tooling/node-v22.11.0-darwin-arm64/bin:$PATH"
+export PATH="$HOME/.local/share/dashboard-mna/bin:$PATH"
 
 # install (only first time)
 npm install
