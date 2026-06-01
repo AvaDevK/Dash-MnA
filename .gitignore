@@ -1,0 +1,12 @@
+node_modules
+.tooling
+dist
+.DS_Store
+.vite
+.vercel
+.env
+.env.local
+*.log
+*.tsbuildinfo
+vite.config.js
+vite.config.d.ts
