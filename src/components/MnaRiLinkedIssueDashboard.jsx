@@ -41,6 +41,11 @@ import {
 } from "recharts";
 import InfoTip from "@/components/InfoTip";
 import {
+  ExecutivePortfolio,
+  DataQuality,
+  SourceBanner,
+} from "@/components/ExecutiveViews";
+import {
   calculateInitiativeCompletion,
   calculateRICompletion,
   calculatePendingPercent,
@@ -197,6 +202,8 @@ export default function MnaRiLinkedIssueDashboard() {
   const [riskFilter, setRiskFilter] = useState("all");
   const [expanded, setExpanded] = useState({});
   const [viewMode, setViewMode] = useState("hierarchy");
+  const [activeTab, setActiveTab] = useState("overview");
+  const [loadedAt, setLoadedAt] = useState(() => Date.now());
 
   const rows = useMemo(() => parseCSV(csvText), [csvText]);
 
@@ -418,6 +425,7 @@ export default function MnaRiLinkedIssueDashboard() {
     setUploadError("");
     setCsvText(text);
     setUploadedFileName(fileName);
+    setLoadedAt(Date.now());
     return true;
   }
 
@@ -440,6 +448,7 @@ export default function MnaRiLinkedIssueDashboard() {
     setCsvText("");
     setUploadedFileName("");
     setUploadError("");
+    setLoadedAt(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -447,6 +456,7 @@ export default function MnaRiLinkedIssueDashboard() {
     setCsvText(SAMPLE_CSV);
     setUploadedFileName("");
     setUploadError("");
+    setLoadedAt(Date.now());
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
@@ -470,6 +480,25 @@ export default function MnaRiLinkedIssueDashboard() {
           </Button>
         </div>
 
+        <div className="flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+          {[
+            { id: "overview", label: "Overview" },
+            { id: "executive", label: "Executive Portfolio" },
+            { id: "quality", label: "Data Quality" },
+          ].map((t) => (
+            <Button
+              key={t.id}
+              variant={activeTab === t.id ? "default" : "ghost"}
+              size="sm"
+              onClick={() => setActiveTab(t.id)}
+              className="rounded-xl"
+            >
+              {t.label}
+            </Button>
+          ))}
+        </div>
+
+        {activeTab === "overview" && (<>
         {/* CSV INPUT CARD: Paste / Upload tabs */}
         <Card className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="p-4">
@@ -932,6 +961,12 @@ export default function MnaRiLinkedIssueDashboard() {
             )}
           </CardContent>
         </Card>
+        </>)}
+
+        {activeTab === "executive" && <ExecutivePortfolio rows={rows} />}
+        {activeTab === "quality" && <DataQuality rows={rows} />}
+
+        <SourceBanner rows={rows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} />
       </div>
     </div>
   );
