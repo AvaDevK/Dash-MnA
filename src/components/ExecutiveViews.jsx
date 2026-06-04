@@ -13,6 +13,7 @@ import {
   FileSpreadsheet,
 } from "lucide-react";
 import InfoTip from "@/components/InfoTip";
+import JiraLink from "@/components/JiraLink";
 import {
   calculateInitiativeCompletion,
   calculatePendingPercent,
@@ -328,7 +329,9 @@ export function ExecutivePortfolio({ rows }) {
                   <tr key={s.key} className="border-t border-slate-100 align-top hover:bg-slate-50">
                     <td className="p-3">
                       <div className="font-semibold text-slate-900">{s.name}</div>
-                      <div className="text-[11px] uppercase tracking-wide text-slate-500">{s.key}</div>
+                      <div className="text-[11px] uppercase tracking-wide text-slate-500">
+                        <JiraLink jKey={s.key} />
+                      </div>
                     </td>
                     <td className="p-3"><HealthBadge health={s.health} /></td>
                     <td className="p-3 min-w-[140px]">
@@ -486,9 +489,9 @@ function BlockerDepTable({ rows, empty }) {
           {rows.map((r, i) => (
             <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
               <td className="p-2 font-semibold">{r.initiative}</td>
-              <td className="p-2 font-mono text-xs">{r.parentKey}</td>
+              <td className="p-2 font-mono text-xs"><JiraLink jKey={r.parentKey} /></td>
               <td className="p-2">
-                <div className="font-mono text-xs">{r.linkedKey}</div>
+                <div className="font-mono text-xs"><JiraLink jKey={r.linkedKey} /></div>
                 <div className="text-slate-700">{r.linkedTitle}</div>
               </td>
               <td className="p-2"><Badge variant="outline">{r.linkedStatus || "Unknown"}</Badge></td>
@@ -695,12 +698,12 @@ export function DataQuality({ rows }) {
                   {dq.parentClosedChildActive.map((d, i) => (
                     <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
                       <td className="p-2">
-                        <div className="font-mono text-xs">{d.parentKey}</div>
+                        <div className="font-mono text-xs"><JiraLink jKey={d.parentKey} /></div>
                         <div className="text-slate-700">{d.parentTitle}</div>
                       </td>
                       <td className="p-2"><Badge className="bg-emerald-100 text-emerald-800 border-emerald-200 border">{d.parentStatus}</Badge></td>
                       <td className="p-2"><Badge variant="outline">{d.childType}</Badge></td>
-                      <td className="p-2 font-mono text-xs">{d.childKey}</td>
+                      <td className="p-2 font-mono text-xs"><JiraLink jKey={d.childKey} /></td>
                       <td className="p-2"><Badge className="bg-amber-100 text-amber-800 border-amber-200 border">{d.childStatus}</Badge></td>
                     </tr>
                   ))}
@@ -732,7 +735,7 @@ export function DataQuality({ rows }) {
                 <tbody>
                   {dq.crossInitiativeLinks.map((d) => (
                     <tr key={d.linkedKey} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="p-2 font-mono text-xs">{d.linkedKey}</td>
+                      <td className="p-2 font-mono text-xs"><JiraLink jKey={d.linkedKey} /></td>
                       <td className="p-2">
                         {d.initiatives.map((i) => (
                           <Badge key={i} variant="outline" className="mr-1">{i}</Badge>
@@ -779,7 +782,7 @@ export function DataQuality({ rows }) {
                       <td className="p-2 font-mono text-xs">{d.row}</td>
                       <td className="p-2"><Badge variant="outline">Orphan Link</Badge></td>
                       <td className="p-2 text-slate-700">
-                        Linked <span className="font-mono text-xs">{d.linkedKey}</span>{" "}
+                        Linked <span className="font-mono text-xs"><JiraLink jKey={d.linkedKey} /></span>{" "}
                         {d.linkedTitle ? `· ${d.linkedTitle}` : ""} has no roadmap_key.
                       </td>
                     </tr>

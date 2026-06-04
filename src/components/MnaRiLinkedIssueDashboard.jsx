@@ -40,6 +40,7 @@ import {
   LabelList,
 } from "recharts";
 import InfoTip from "@/components/InfoTip";
+import JiraLink from "@/components/JiraLink";
 import {
   ExecutivePortfolio,
   DataQuality,
@@ -197,7 +198,8 @@ export default function MnaRiLinkedIssueDashboard() {
   const fileInputRef = useRef(null);
 
   const [search, setSearch] = useState("");
-  const [mnaFilter, setMnaFilter] = useState("all");
+  const [selectedMnas, setSelectedMnas] = useState(() => new Set());
+  const mnaFilter = "all"; // legacy var kept "all" - global chip filter is the real source of truth (filters rows upstream)
   const [riFilter, setRiFilter] = useState("all");
   const [riskFilter, setRiskFilter] = useState("all");
   const [expanded, setExpanded] = useState({});
@@ -207,9 +209,34 @@ export default function MnaRiLinkedIssueDashboard() {
 
   const rows = useMemo(() => parseCSV(csvText), [csvText]);
 
+  const mnas = useMemo(() => {
+    const set = new Set();
+    rows.forEach((r) => {
+      const n = getInitiative(r);
+      if (n) set.add(n);
+    });
+    return Array.from(set).sort();
+  }, [rows]);
+
+  const filteredRows = useMemo(() => {
+    if (selectedMnas.size === 0) return rows;
+    return rows.filter((r) => selectedMnas.has(getInitiative(r)));
+  }, [rows, selectedMnas]);
+
+  const toggleMna = (name) => {
+    setSelectedMnas((prev) => {
+      const next = new Set(prev);
+      if (next.has(name)) next.delete(name);
+      else next.add(name);
+      return next;
+    });
+  };
+  const selectAllMnas = () => setSelectedMnas(new Set());
+  const isMnaActive = (m) => selectedMnas.size === 0 || selectedMnas.has(m);
+
   const parents = useMemo(() => {
     const map = new Map();
-    rows.forEach((r) => {
+    filteredRows.forEach((r) => {
       const parentKey = getParentKey(r);
       const parentTitle = getParentTitle(r);
       if (!parentKey) return;
@@ -230,9 +257,9 @@ export default function MnaRiLinkedIssueDashboard() {
       }
     });
     return Array.from(map.values());
-  }, [rows]);
+  }, [filteredRows]);
 
-  const hierarchy = useMemo(() => buildHierarchy(rows), [rows]);
+  const hierarchy = useMemo(() => buildHierarchy(filteredRows), [filteredRows]);
   const toggle = (id) =>
     setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   const expandAll = () => {
@@ -246,10 +273,6 @@ export default function MnaRiLinkedIssueDashboard() {
   };
   const collapseAll = () => setExpanded({});
 
-  const mnas = useMemo(
-    () => Array.from(new Set(parents.map((p) => p.mna))).sort(),
-    [parents],
-  );
   const ris = ["RI1", "RI2", "RI3", "RI4", "RI5"];
 
   // Initiative-level rollup (de-duped across RIs, per spec).
@@ -264,7 +287,7 @@ export default function MnaRiLinkedIssueDashboard() {
     });
     return Array.from(map.values())
       .map((g) => {
-        const completion = calculateInitiativeCompletion(rows, g.key);
+        const completion = calculateInitiativeCompletion(filteredRows, g.key);
         return {
           ...g,
           completion,
@@ -275,7 +298,7 @@ export default function MnaRiLinkedIssueDashboard() {
         };
       })
       .sort((a, b) => a.completion - b.completion);
-  }, [parents, rows]);
+  }, [parents, filteredRows]);
 
   const initiativeCompletionAvg = useMemo(() => {
     if (!initiativeSummaries.length) return 0;
@@ -314,26 +337,28 @@ export default function MnaRiLinkedIssueDashboard() {
   }, [parents, search, mnaFilter, riFilter, riskFilter]);
 
   const metrics = useMemo(() => {
-    const linkedRows = rows.filter(
+    const linkedRows = filteredRows.filter(
       (r) =>
         r.linked_key && (r.link_type || "").toUpperCase().trim() !== "NO LINKS",
     ).length;
     const zeroParents = parents.filter((p) => p.links.length === 0).length;
-    const blockers = rows.filter((r) =>
+    const blockers = filteredRows.filter((r) =>
       (r.link_type || "").toLowerCase().includes("block"),
     ).length;
-    const gaps = rows.filter((r) =>
+    const gaps = filteredRows.filter((r) =>
       /\[gap\]|gap/i.test(r.linked_title || ""),
     ).length;
+    const visibleMnas =
+      selectedMnas.size === 0 ? mnas.length : selectedMnas.size;
     return {
       parents: parents.length,
       linkedRows,
       zeroParents,
       blockers,
       gaps,
-      mnas: mnas.length,
+      mnas: visibleMnas,
     };
-  }, [rows, parents, mnas]);
+  }, [filteredRows, parents, mnas, selectedMnas]);
 
   const mnaChart = useMemo(
     () =>
@@ -350,7 +375,7 @@ export default function MnaRiLinkedIssueDashboard() {
     return ris.map((ri) => {
       const p = parents.filter((x) => x.ri === ri);
       const completionList = p
-        .map((x) => calculateRICompletion(rows, x.parent_key))
+        .map((x) => calculateRICompletion(filteredRows, x.parent_key))
         .filter((v) => !Number.isNaN(v));
       const avg = completionList.length
         ? Math.round(
@@ -364,7 +389,7 @@ export default function MnaRiLinkedIssueDashboard() {
         zero: p.filter((x) => x.links.length === 0).length,
       };
     });
-  }, [parents, rows]);
+  }, [parents, filteredRows]);
 
   const coverageData = [
     { name: "Parents with links", value: metrics.parents - metrics.zeroParents },
@@ -497,6 +522,45 @@ export default function MnaRiLinkedIssueDashboard() {
             </Button>
           ))}
         </div>
+
+        {mnas.length > 0 && (
+          <Card className="rounded-2xl border-slate-200 shadow-sm">
+            <CardContent className="flex flex-wrap items-center gap-2 p-3">
+              <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                Filter by M&A
+              </span>
+              {mnas.map((m) => {
+                const active = isMnaActive(m);
+                return (
+                  <button
+                    key={m}
+                    type="button"
+                    onClick={() => toggleMna(m)}
+                    className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
+                      active
+                        ? "border-slate-900 bg-slate-900 text-white"
+                        : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
+                    }`}
+                    aria-pressed={active}
+                  >
+                    {m}
+                  </button>
+                );
+              })}
+              <Button size="sm" variant="ghost" onClick={selectAllMnas} className="h-7 px-2 text-xs">
+                Show all
+              </Button>
+              <span className="ml-auto text-xs text-slate-500">
+                {selectedMnas.size === 0
+                  ? `Showing all ${mnas.length} M&As`
+                  : `Showing ${selectedMnas.size} of ${mnas.length} M&As`}
+              </span>
+              <InfoTip title="Global M&A filter" side="left">
+                Click M&A chips to focus the entire dashboard - <b>every chart, KPI and table on every tab</b> updates instantly. Click again to deselect. <b>Show all</b> clears the filter. The footer record count always reflects the full dataset.
+              </InfoTip>
+            </CardContent>
+          </Card>
+        )}
 
         {activeTab === "overview" && (<>
         {/* CSV INPUT CARD: Paste / Upload tabs */}
@@ -867,7 +931,7 @@ export default function MnaRiLinkedIssueDashboard() {
                 )}
               </div>
             </div>
-            <div className="grid gap-3 md:grid-cols-4">
+            <div className="grid gap-3 md:grid-cols-3">
               <div className="relative md:col-span-1">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
                 <Input
@@ -877,19 +941,6 @@ export default function MnaRiLinkedIssueDashboard() {
                   className="pl-9"
                 />
               </div>
-              <Select value={mnaFilter} onValueChange={setMnaFilter}>
-                <SelectTrigger>
-                  <SelectValue placeholder="M&A" />
-                </SelectTrigger>
-                <SelectContent>
-                  <SelectItem value="all">All M&As</SelectItem>
-                  {mnas.map((m) => (
-                    <SelectItem key={m} value={m}>
-                      {m}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
               <Select value={riFilter} onValueChange={setRiFilter}>
                 <SelectTrigger>
                   <SelectValue placeholder="RI" />
@@ -925,7 +976,7 @@ export default function MnaRiLinkedIssueDashboard() {
                 mnaFilter={mnaFilter}
                 riFilter={riFilter}
                 riskFilter={riskFilter}
-                rows={rows}
+                rows={filteredRows}
               />
             ) : (
               <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
@@ -963,8 +1014,8 @@ export default function MnaRiLinkedIssueDashboard() {
         </Card>
         </>)}
 
-        {activeTab === "executive" && <ExecutivePortfolio rows={rows} />}
-        {activeTab === "quality" && <DataQuality rows={rows} />}
+        {activeTab === "executive" && <ExecutivePortfolio rows={filteredRows} />}
+        {activeTab === "quality" && <DataQuality rows={filteredRows} />}
 
         <SourceBanner rows={rows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} />
       </div>
@@ -1258,7 +1309,9 @@ function TreeNode({
           )}
         </button>
         <Badge variant="outline">{typeLabel}</Badge>
-        <div className="min-w-28 font-semibold">{node.key}</div>
+        <div className="min-w-28 font-semibold">
+          <JiraLink jKey={node.key} />
+        </div>
         <div className="flex-1 text-slate-700">{node.title}</div>
         {node.status && (
           <Badge className={`${statusTone(node.status)} border`}>
@@ -1284,7 +1337,9 @@ function TreeNode({
               key={`${node.id}-${l.linked_key}-${idx}`}
               className="grid grid-cols-12 gap-2 border-t border-slate-100 p-2 text-xs first:border-t-0"
             >
-              <div className="col-span-2 font-semibold">{l.linked_key}</div>
+              <div className="col-span-2 font-semibold">
+                <JiraLink jKey={l.linked_key} />
+              </div>
               <div className="col-span-6">{l.linked_title}</div>
               <div className="col-span-2">
                 <Badge className={`${statusTone(l.linked_status)} border`}>
@@ -1359,7 +1414,9 @@ function ParentRow({ p, link, showParent = true, rowSpan = 1 }) {
     <tr className="border-t border-slate-100 align-top hover:bg-slate-50">
       {showParent && (
         <td className="p-3" rowSpan={rowSpan}>
-          <div className="font-semibold text-slate-900">{p.parent_key}</div>
+          <div className="font-semibold text-slate-900">
+            <JiraLink jKey={p.parent_key} />
+          </div>
           <div className="max-w-md text-slate-700">{p.parent_title}</div>
           <div className="mt-1 flex gap-1">
             <Badge variant="outline">{p.mna}</Badge>
@@ -1377,7 +1434,9 @@ function ParentRow({ p, link, showParent = true, rowSpan = 1 }) {
       <td className="p-3">
         {link ? (
           <>
-            <div className="font-semibold">{link.linked_key}</div>
+            <div className="font-semibold">
+              <JiraLink jKey={link.linked_key} />
+            </div>
             <div className="max-w-xl text-slate-700">{link.linked_title}</div>
           </>
         ) : (
