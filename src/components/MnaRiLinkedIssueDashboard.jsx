@@ -1,19 +1,62 @@
-import React, { useMemo, useState } from "react";
+import React, { useMemo, useRef, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import { Badge } from "@/components/ui/badge";
-import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
-import { Search, Upload, AlertTriangle, Link2, BarChart3, CircleCheck, CircleDashed, Download, ChevronRight, ChevronDown } from "lucide-react";
-import { BarChart, Bar, XAxis, YAxis, Tooltip, ResponsiveContainer, PieChart, Pie, Cell } from "recharts";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
+import {
+  Search,
+  Upload,
+  AlertTriangle,
+  Link2,
+  BarChart3,
+  CircleCheck,
+  CircleDashed,
+  Download,
+  ChevronRight,
+  ChevronDown,
+  FileSpreadsheet,
+  FilePlus,
+  X,
+  TrendingUp,
+} from "lucide-react";
+import {
+  BarChart,
+  Bar,
+  XAxis,
+  YAxis,
+  Tooltip,
+  ResponsiveContainer,
+  PieChart,
+  Pie,
+  Cell,
+  LabelList,
+} from "recharts";
+import InfoTip from "@/components/InfoTip";
+import {
+  calculateInitiativeCompletion,
+  calculateRICompletion,
+  calculatePendingPercent,
+} from "@/lib/completion";
 
-const SAMPLE_CSV = `initiative_key,initiative_title,initiative_status,roadmap_key,roadmap_title,roadmap_status,epic_key,epic_title,epic_status,story_key,story_title,story_status,linked_key,linked_title,linked_status,link_type
-MNA-DAVO,DAVO,Active,MNAC-27,DAVO | Reliability Engineering Work (RI1),Closed,RELE-320389,DAVO - Reliability Engineering,Done,RELE-320389-1,Monitoring story,In Progress,OBS-101,Observability dependency,To Do,relates to
-MNA-DAVO,DAVO,Active,MNAC-11,DAVO | Shared Services Adoption (RI4),Elaboration,D30-9695,DAVO - Console Integration,To Do,D30-9695-1,Console migration story,To Do,IAM-8727,[GAP] DAVO IAM Assessment,To Do,is blocked by
-MNA-DAVO,DAVO,Active,MNAC-25,DAVO | AVATech Onboarding (RI2),Closed,,,,,,,,,,
-MNA-1099,Track1099,Active,MNAC-31,Track1099 | Reliability Engineering Work (RI1),Elaboration,AVA1099-9375,1099 RI1 Execution Epic,New,AVA1099-9375-1,Execution story,New,CDC-140,1099 CDC Production,Production,relates to
-MNA-OOBJ,Oobj,Active,MNAC-53,Oobj | Reliability Engineering Work (RI1),New,RELEC-208,Oobj RELEC Active 1,Waiting,,,,,RELEC-164,Oobj RELEC Active 2,In Progress,is blocked by`;
+const SAMPLE_CSV = `sbr_key,sbr_title,sbr_status,initiative_key,initiative_title,initiative_status,roadmap_key,roadmap_title,roadmap_status,epic_key,epic_title,epic_status,story_key,story_title,story_status,story_issuetype,subtask_key,subtask_title,subtask_status,subtask_issuetype,linked_key,linked_title,linked_status,linked_issuetype,link_direction,link_type
+SBR-356,M&A Onboarding,Active,MNA-DAVO,DAVO,Active,MNAC-27,DAVO | Reliability Engineering Work (RI1),Closed,RELE-320389,DAVO - Reliability Engineering,Done,RELE-320389-1,Monitoring story,Done,Story,,,,,OBS-101,Observability dependency,Done,Task,outbound,relates to
+SBR-356,M&A Onboarding,Active,MNA-DAVO,DAVO,Active,MNAC-11,DAVO | Shared Services Adoption (RI4),Elaboration,D30-9695,DAVO - Console Integration,To Do,D30-9695-1,Console migration story,In Progress,Task,D30-9695-1-1,Datastore prep subtask,To Do,Sub-task,IAM-8727,[GAP] DAVO IAM Assessment,To Do,Task,inbound,is blocked by
+SBR-356,M&A Onboarding,Active,MNA-DAVO,DAVO,Active,MNAC-25,DAVO | AVATech Onboarding (RI2),Closed,,,,,,,,,,,,,,,NO LINKS
+SBR-356,M&A Onboarding,Active,MNA-1099,Track1099,Active,MNAC-31,Track1099 | Reliability Engineering Work (RI1),Elaboration,AVA1099-9375,1099 RI1 Execution Epic,In Progress,AVA1099-9375-1,Execution story,Done,Story,,,,,CDC-140,1099 CDC Production,Production,Task,outbound,relates to
+SBR-356,M&A Onboarding,Active,MNA-OOBJ,Oobj,Active,MNAC-53,Oobj | Reliability Engineering Work (RI1),New,RELEC-208,Oobj RELEC Active 1,Waiting for Production,,,,,,,,,,RELEC-164,Oobj RELEC Active 2,In Progress,Task,inbound,is blocked by`;
+
+const HEADER_REQUIREMENT_GROUPS = [
+  ["roadmap_key", "parent_key", "ri_key", "roadmap_item_key"],
+  ["roadmap_title", "parent_title", "ri_title", "roadmap_item_title"],
+];
 
 function parseCSVLine(line) {
   const result = [];
@@ -50,8 +93,17 @@ function parseCSV(text) {
   });
 }
 
-function getMna(title = "") {
-  return title.split("|")[0]?.trim() || "Unknown";
+function validateCSVHeaders(text) {
+  const firstLine = (text.split(/\r?\n/)[0] || "").trim();
+  if (!firstLine) return ["empty CSV"];
+  const headers = parseCSVLine(firstLine).map((h) => h.toLowerCase().trim());
+  const missing = [];
+  HEADER_REQUIREMENT_GROUPS.forEach((group) => {
+    if (!group.some((h) => headers.includes(h))) {
+      missing.push(group.join(" / "));
+    }
+  });
+  return missing;
 }
 
 function pick(row, keys) {
@@ -59,21 +111,48 @@ function pick(row, keys) {
   return "";
 }
 
+function getMna(title = "") {
+  return title.split("|")[0]?.trim() || "Unknown";
+}
+
 function getParentKey(row) {
   return pick(row, ["parent_key", "roadmap_key", "ri_key", "roadmap_item_key"]);
 }
 
 function getParentTitle(row) {
-  return pick(row, ["parent_title", "roadmap_title", "ri_title", "roadmap_item_title"]);
+  return pick(row, [
+    "parent_title",
+    "roadmap_title",
+    "ri_title",
+    "roadmap_item_title",
+  ]);
 }
 
 function getParentStatus(row) {
-  return pick(row, ["parent_status", "roadmap_status", "ri_status", "roadmap_item_status"]);
+  return pick(row, [
+    "parent_status",
+    "roadmap_status",
+    "ri_status",
+    "roadmap_item_status",
+  ]);
 }
 
 function getInitiative(row) {
-  const title = pick(row, ["initiative_title", "initiative_name", "mna", "mna_name"]);
+  const title = pick(row, [
+    "initiative_title",
+    "initiative_name",
+    "mna",
+    "mna_name",
+  ]);
   return title || getMna(getParentTitle(row));
+}
+
+function getInitiativeKey(row) {
+  return (
+    pick(row, ["initiative_key", "mna_key"]) ||
+    getInitiative(row) ||
+    "Unknown"
+  );
 }
 
 function getRI(title = "") {
@@ -83,15 +162,35 @@ function getRI(title = "") {
 
 function statusTone(status = "") {
   const s = status.toLowerCase();
-  if (["done", "closed", "resolved", "production"].some((x) => s.includes(x))) return "bg-emerald-100 text-emerald-800 border-emerald-200";
-  if (["progress", "waiting", "blocked"].some((x) => s.includes(x))) return "bg-amber-100 text-amber-800 border-amber-200";
-  if (["todo", "to do", "new", "elaboration", "ideation"].some((x) => s.includes(x))) return "bg-sky-100 text-sky-800 border-sky-200";
+  if (["done", "closed", "resolved"].some((x) => s.includes(x)))
+    return "bg-emerald-100 text-emerald-800 border-emerald-200";
+  if (["progress", "waiting", "blocked", "production"].some((x) => s.includes(x)))
+    return "bg-amber-100 text-amber-800 border-amber-200";
+  if (
+    ["todo", "to do", "new", "elaboration", "ideation", "backlog", "open"].some(
+      (x) => s.includes(x),
+    )
+  )
+    return "bg-sky-100 text-sky-800 border-sky-200";
   if (s.includes("cancel")) return "bg-slate-100 text-slate-700 border-slate-200";
   return "bg-gray-100 text-gray-800 border-gray-200";
 }
 
+function completionTone(pct) {
+  if (pct >= 80) return { bg: "bg-emerald-500", text: "text-emerald-700" };
+  if (pct >= 50) return { bg: "bg-amber-500", text: "text-amber-700" };
+  if (pct >= 25) return { bg: "bg-orange-500", text: "text-orange-700" };
+  return { bg: "bg-rose-500", text: "text-rose-700" };
+}
+
 export default function MnaRiLinkedIssueDashboard() {
   const [csvText, setCsvText] = useState(SAMPLE_CSV);
+  const [inputMode, setInputMode] = useState("paste");
+  const [uploadedFileName, setUploadedFileName] = useState("");
+  const [uploadError, setUploadError] = useState("");
+  const [isDragOver, setIsDragOver] = useState(false);
+  const fileInputRef = useRef(null);
+
   const [search, setSearch] = useState("");
   const [mnaFilter, setMnaFilter] = useState("all");
   const [riFilter, setRiFilter] = useState("all");
@@ -113,46 +212,91 @@ export default function MnaRiLinkedIssueDashboard() {
           parent_title: parentTitle,
           parent_status: getParentStatus(r),
           mna: getInitiative(r),
+          initiativeKey: getInitiativeKey(r),
           ri: getRI(parentTitle),
           links: [],
         });
       }
-      if (r.linked_key) map.get(parentKey).links.push(r);
+      const linkType = (r.link_type || "").toUpperCase().trim();
+      if (r.linked_key && linkType !== "NO LINKS") {
+        map.get(parentKey).links.push(r);
+      }
     });
     return Array.from(map.values());
   }, [rows]);
 
   const hierarchy = useMemo(() => buildHierarchy(rows), [rows]);
-  const toggle = (id) => setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
+  const toggle = (id) =>
+    setExpanded((prev) => ({ ...prev, [id]: !prev[id] }));
   const expandAll = () => {
     const all = {};
-    hierarchy.forEach((i) => {
-      all[i.id] = true;
-      i.children.forEach((r) => {
-        all[r.id] = true;
-        r.children.forEach((e) => {
-          all[e.id] = true;
-          e.children.forEach((s) => (all[s.id] = true));
-        });
-      });
-    });
+    const walk = (node) => {
+      all[node.id] = true;
+      node.children.forEach(walk);
+    };
+    hierarchy.forEach(walk);
     setExpanded(all);
   };
   const collapseAll = () => setExpanded({});
 
-  const mnas = useMemo(() => Array.from(new Set(parents.map((p) => p.mna))).sort(), [parents]);
+  const mnas = useMemo(
+    () => Array.from(new Set(parents.map((p) => p.mna))).sort(),
+    [parents],
+  );
   const ris = ["RI1", "RI2", "RI3", "RI4", "RI5"];
+
+  // Initiative-level rollup (de-duped across RIs, per spec).
+  const initiativeSummaries = useMemo(() => {
+    const map = new Map();
+    parents.forEach((p) => {
+      const key = p.initiativeKey;
+      if (!map.has(key)) {
+        map.set(key, { key, name: p.mna, ris: [] });
+      }
+      map.get(key).ris.push(p);
+    });
+    return Array.from(map.values())
+      .map((g) => {
+        const completion = calculateInitiativeCompletion(rows, g.key);
+        return {
+          ...g,
+          completion,
+          pending: calculatePendingPercent(completion),
+          riCount: g.ris.length,
+          linkedIssues: g.ris.reduce((sum, x) => sum + x.links.length, 0),
+          zeroLinkRis: g.ris.filter((x) => x.links.length === 0).length,
+        };
+      })
+      .sort((a, b) => a.completion - b.completion);
+  }, [parents, rows]);
+
+  const initiativeCompletionAvg = useMemo(() => {
+    if (!initiativeSummaries.length) return 0;
+    return Math.round(
+      initiativeSummaries.reduce((s, x) => s + x.completion, 0) /
+        initiativeSummaries.length,
+    );
+  }, [initiativeSummaries]);
 
   const filteredParents = useMemo(() => {
     return parents.filter((p) => {
       const q = search.toLowerCase();
-      const searchable = `${p.parent_key} ${p.parent_title} ${p.parent_status} ${p.links.map((l) => `${l.linked_key} ${l.linked_title} ${l.linked_status} ${l.link_type}`).join(" ")}`.toLowerCase();
+      const searchable = `${p.parent_key} ${p.parent_title} ${p.parent_status} ${p.links
+        .map(
+          (l) =>
+            `${l.linked_key} ${l.linked_title} ${l.linked_status} ${l.link_type}`,
+        )
+        .join(" ")}`.toLowerCase();
       const matchesSearch = !q || searchable.includes(q);
       const matchesMna = mnaFilter === "all" || p.mna === mnaFilter;
       const matchesRi = riFilter === "all" || p.ri === riFilter;
-      const hasBlocker = p.links.some((l) => (l.link_type || "").toLowerCase().includes("block"));
+      const hasBlocker = p.links.some((l) =>
+        (l.link_type || "").toLowerCase().includes("block"),
+      );
       const zeroLinks = p.links.length === 0;
-      const hasGap = p.links.some((l) => /\[gap\]|gap/i.test(l.linked_title || ""));
+      const hasGap = p.links.some((l) =>
+        /\[gap\]|gap/i.test(l.linked_title || ""),
+      );
       const matchesRisk =
         riskFilter === "all" ||
         (riskFilter === "blocked" && hasBlocker) ||
@@ -163,45 +307,92 @@ export default function MnaRiLinkedIssueDashboard() {
   }, [parents, search, mnaFilter, riFilter, riskFilter]);
 
   const metrics = useMemo(() => {
-    const linkedRows = rows.filter((r) => r.linked_key).length;
+    const linkedRows = rows.filter(
+      (r) =>
+        r.linked_key && (r.link_type || "").toUpperCase().trim() !== "NO LINKS",
+    ).length;
     const zeroParents = parents.filter((p) => p.links.length === 0).length;
-    const blockers = rows.filter((r) => (r.link_type || "").toLowerCase().includes("block")).length;
-    const gaps = rows.filter((r) => /\[gap\]|gap/i.test(r.linked_title || "")).length;
-    return { parents: parents.length, linkedRows, zeroParents, blockers, gaps, mnas: mnas.length };
+    const blockers = rows.filter((r) =>
+      (r.link_type || "").toLowerCase().includes("block"),
+    ).length;
+    const gaps = rows.filter((r) =>
+      /\[gap\]|gap/i.test(r.linked_title || ""),
+    ).length;
+    return {
+      parents: parents.length,
+      linkedRows,
+      zeroParents,
+      blockers,
+      gaps,
+      mnas: mnas.length,
+    };
   }, [rows, parents, mnas]);
 
-  const mnaChart = useMemo(() => {
-    return mnas.map((mna) => {
-      const p = parents.filter((x) => x.mna === mna);
-      return {
-        name: mna,
-        linked: p.reduce((sum, x) => sum + x.links.length, 0),
-        parents: p.length,
-        zero: p.filter((x) => x.links.length === 0).length,
-      };
-    });
-  }, [parents, mnas]);
+  const mnaChart = useMemo(
+    () =>
+      initiativeSummaries.map((g) => ({
+        name: g.name,
+        completion: g.completion,
+        pending: g.pending,
+        linked: g.linkedIssues,
+      })),
+    [initiativeSummaries],
+  );
 
   const riChart = useMemo(() => {
     return ris.map((ri) => {
       const p = parents.filter((x) => x.ri === ri);
-      return { name: ri, linked: p.reduce((sum, x) => sum + x.links.length, 0), zero: p.filter((x) => x.links.length === 0).length };
+      const completionList = p
+        .map((x) => calculateRICompletion(rows, x.parent_key))
+        .filter((v) => !Number.isNaN(v));
+      const avg = completionList.length
+        ? Math.round(
+            completionList.reduce((a, b) => a + b, 0) / completionList.length,
+          )
+        : 0;
+      return {
+        name: ri,
+        completion: avg,
+        linked: p.reduce((sum, x) => sum + x.links.length, 0),
+        zero: p.filter((x) => x.links.length === 0).length,
+      };
     });
-  }, [parents]);
+  }, [parents, rows]);
 
   const coverageData = [
     { name: "Parents with links", value: metrics.parents - metrics.zeroParents },
     { name: "Parents without links", value: metrics.zeroParents },
   ];
 
+  const PIE_COLORS = ["#10b981", "#f59e0b"];
+
   const exportFiltered = () => {
-    const header = "parent_key,parent_title,parent_status,linked_key,linked_title,linked_status,link_type";
+    const header =
+      "parent_key,parent_title,parent_status,linked_key,linked_title,linked_status,link_type";
     const out = [header];
     filteredParents.forEach((p) => {
       if (p.links.length === 0) {
-        out.push([p.parent_key, p.parent_title, p.parent_status, "", "", "", ""].map(csvEscape).join(","));
+        out.push(
+          [p.parent_key, p.parent_title, p.parent_status, "", "", "", ""]
+            .map(csvEscape)
+            .join(","),
+        );
       } else {
-        p.links.forEach((l) => out.push([l.parent_key, l.parent_title, l.parent_status, l.linked_key, l.linked_title, l.linked_status, l.link_type].map(csvEscape).join(",")));
+        p.links.forEach((l) =>
+          out.push(
+            [
+              l.parent_key || p.parent_key,
+              l.parent_title || p.parent_title,
+              l.parent_status || p.parent_status,
+              l.linked_key,
+              l.linked_title,
+              l.linked_status,
+              l.link_type,
+            ]
+              .map(csvEscape)
+              .join(","),
+          ),
+        );
       }
     });
     const blob = new Blob([out.join("\n")], { type: "text/csv" });
@@ -218,6 +409,47 @@ export default function MnaRiLinkedIssueDashboard() {
     return /[",\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
   }
 
+  function loadFromText(text, fileName = "") {
+    const missing = validateCSVHeaders(text);
+    if (missing.length) {
+      setUploadError(`Missing required header(s): ${missing.join("; ")}`);
+      return false;
+    }
+    setUploadError("");
+    setCsvText(text);
+    setUploadedFileName(fileName);
+    return true;
+  }
+
+  function handleFile(file) {
+    if (!file) return;
+    if (!/\.csv$/i.test(file.name)) {
+      setUploadError("Only .csv files are accepted.");
+      return;
+    }
+    const reader = new FileReader();
+    reader.onerror = () => setUploadError("Could not read the file.");
+    reader.onload = (e) => {
+      const text = String(e.target?.result || "");
+      loadFromText(text, file.name);
+    };
+    reader.readAsText(file);
+  }
+
+  function clearData() {
+    setCsvText("");
+    setUploadedFileName("");
+    setUploadError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  function resetToSample() {
+    setCsvText(SAMPLE_CSV);
+    setUploadedFileName("");
+    setUploadError("");
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -226,42 +458,266 @@ export default function MnaRiLinkedIssueDashboard() {
             <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
               <BarChart3 className="h-3.5 w-3.5" /> Leadership View
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">M&A Jira Hierarchy + Linked-Issue Dashboard</h1>
-            <p className="mt-1 text-sm text-slate-600">Paste Jira CSV once. View Initiative → Roadmap Item → Epic → Story, plus linked issues, blockers, gaps, and zero-link records.</p>
+            <h1 className="text-3xl font-bold tracking-tight">
+              M&amp;A Jira Hierarchy + Linked-Issue Dashboard
+            </h1>
+            <p className="mt-1 text-sm text-slate-600">
+              SBR-356 → Initiative → Roadmap Item → Epic → Story/Task/Sub-task → linked Jira. Paste or upload your CSV.
+            </p>
           </div>
           <Button onClick={exportFiltered} className="gap-2 rounded-2xl shadow-sm">
             <Download className="h-4 w-4" /> Export Filtered CSV
           </Button>
         </div>
 
+        {/* CSV INPUT CARD: Paste / Upload tabs */}
         <Card className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="p-4">
-            <div className="mb-3 flex items-center gap-2 font-semibold"><Upload className="h-4 w-4" /> Paste CSV</div>
-            <Textarea value={csvText} onChange={(e) => setCsvText(e.target.value)} className="min-h-40 font-mono text-xs" placeholder="Paste CSV. Supported: initiative_key, initiative_title, initiative_status, roadmap_key, roadmap_title, roadmap_status, epic_key, epic_title, epic_status, story_key, story_title, story_status, linked_key, linked_title, linked_status, link_type. Legacy parent_* CSV also works." />
+            <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
+              <div className="flex items-center gap-2 font-semibold">
+                <FileSpreadsheet className="h-4 w-4" /> Data Source
+                <InfoTip title="How to load data" side="right">
+                  Two ways to load Jira data: <b>Paste</b> exported CSV text, or <b>Upload</b> a <code>.csv</code> file. We validate that at least <code>roadmap_key</code> (or <code>parent_key</code>) and <code>roadmap_title</code> (or <code>parent_title</code>) columns exist. All other columns are optional and used when present.
+                </InfoTip>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                <Button
+                  variant={inputMode === "paste" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setInputMode("paste")}
+                  className="gap-2"
+                >
+                  <FileSpreadsheet className="h-4 w-4" /> Paste
+                </Button>
+                <Button
+                  variant={inputMode === "upload" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setInputMode("upload")}
+                  className="gap-2"
+                >
+                  <Upload className="h-4 w-4" /> Upload CSV
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={resetToSample}
+                  className="gap-2 text-slate-600"
+                >
+                  Reset to sample
+                </Button>
+              </div>
+            </div>
+
+            {inputMode === "paste" ? (
+              <Textarea
+                value={csvText}
+                onChange={(e) => {
+                  setCsvText(e.target.value);
+                  setUploadedFileName("");
+                  setUploadError("");
+                }}
+                className="min-h-40 font-mono text-xs"
+                placeholder="Paste CSV. Supported headers: sbr_*, initiative_*, roadmap_*, epic_*, story_*, subtask_*, source_issue_*, linked_*, link_direction, link_type. Legacy parent_* CSV also works."
+              />
+            ) : (
+              <div className="space-y-3">
+                <label
+                  htmlFor="csv-upload-input"
+                  onDragOver={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(true);
+                  }}
+                  onDragLeave={() => setIsDragOver(false)}
+                  onDrop={(e) => {
+                    e.preventDefault();
+                    setIsDragOver(false);
+                    const f = e.dataTransfer.files?.[0];
+                    handleFile(f);
+                  }}
+                  className={`flex cursor-pointer flex-col items-center justify-center gap-2 rounded-2xl border-2 border-dashed p-8 text-center transition ${
+                    isDragOver
+                      ? "border-sky-500 bg-sky-50"
+                      : "border-slate-300 hover:border-slate-400 hover:bg-slate-50"
+                  }`}
+                >
+                  <FilePlus className="h-7 w-7 text-slate-500" />
+                  <div className="text-sm font-semibold text-slate-800">
+                    Drop a <span className="font-mono">.csv</span> here or click to browse
+                  </div>
+                  <div className="text-xs text-slate-500">
+                    Parsed entirely in your browser — no upload to any server.
+                  </div>
+                  <input
+                    id="csv-upload-input"
+                    ref={fileInputRef}
+                    type="file"
+                    accept=".csv,text/csv"
+                    className="hidden"
+                    onChange={(e) => handleFile(e.target.files?.[0])}
+                  />
+                </label>
+                {uploadedFileName && !uploadError && (
+                  <div className="flex flex-wrap items-center justify-between gap-2 rounded-xl border border-emerald-200 bg-emerald-50 p-3 text-sm text-emerald-800">
+                    <div className="flex items-center gap-2">
+                      <FileSpreadsheet className="h-4 w-4" />
+                      Loaded: <span className="font-mono">{uploadedFileName}</span>
+                      <span className="text-emerald-700">· {rows.length} row(s)</span>
+                    </div>
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={clearData}
+                      className="gap-1 text-emerald-900 hover:bg-emerald-100"
+                    >
+                      <X className="h-4 w-4" /> Clear / Upload another
+                    </Button>
+                  </div>
+                )}
+                {uploadError && (
+                  <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold">Could not load CSV</div>
+                      <div className="text-xs">{uploadError}</div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
           </CardContent>
         </Card>
 
+        {/* METRICS */}
         <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
-          <Metric title="M&As" value={metrics.mnas} icon={<CircleCheck />} />
-          <Metric title="RI / Roadmap Items" value={metrics.parents} icon={<CircleDashed />} />
-          <Metric title="Linked Issues" value={metrics.linkedRows} icon={<Link2 />} />
-          <Metric title="No-Link Parents" value={metrics.zeroParents} icon={<AlertTriangle />} warn />
-          <Metric title="Blockers" value={metrics.blockers} icon={<AlertTriangle />} warn />
-          <Metric title="Gaps" value={metrics.gaps} icon={<Search />} />
+          <Metric
+            title="M&As"
+            value={metrics.mnas}
+            icon={<CircleCheck />}
+            tip="Distinct Initiatives (M&A acquisitions). Counted from initiative_title / initiative_key / mna in the CSV."
+          />
+          <Metric
+            title="RI / Roadmap Items"
+            value={metrics.parents}
+            icon={<CircleDashed />}
+            tip="Total Roadmap Items (RIs) loaded. One per unique roadmap_key / parent_key. Each RI is a parent of Epics, Stories, Sub-tasks and linked Jira records."
+          />
+          <Metric
+            title="Linked Issues"
+            value={metrics.linkedRows}
+            icon={<Link2 />}
+            tip="CSV rows with a populated linked_key (rows marked link_type = NO LINKS are excluded). Use this to gauge external dependency volume."
+          />
+          <Metric
+            title="No-Link Parents"
+            value={metrics.zeroParents}
+            icon={<AlertTriangle />}
+            warn
+            tip="Roadmap Items that have no linked Jira issues. These are gaps in dependency mapping — leadership should ask the team why an RI has no downstream tracking."
+          />
+          <Metric
+            title="Blockers"
+            value={metrics.blockers}
+            icon={<AlertTriangle />}
+            warn
+            tip="Linked rows whose link_type contains 'block' (e.g. 'is blocked by'). Active risk: these have to clear before the parent RI can complete."
+          />
+          <Metric
+            title="Gaps"
+            value={metrics.gaps}
+            icon={<Search />}
+            tip="Linked rows whose title contains '[GAP]' (or the word 'gap'). These are explicit, team-flagged gaps in M&A onboarding coverage."
+          />
         </div>
 
+        {/* INITIATIVE COMPLETION OVERVIEW */}
+        <Card className="rounded-2xl border-slate-200 shadow-sm">
+          <CardContent className="p-4">
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
+              <div>
+                <div className="flex items-center gap-2">
+                  <h2 className="font-semibold">M&amp;A Onboarding Progress</h2>
+                  <InfoTip title="How completion is calculated" side="right">
+                    Each Initiative's completion is the average of its Roadmap Items (RIs). An RI's completion is the % of its child Jira records ({" "}
+                    <code>epic_key</code>, <code>story_key</code>, <code>subtask_key</code>, <code>source_issue_key</code>, plus linked records) whose status is Done / Closed / Resolved / Cancelled. RIs with no children fall back to their own status. Shared linked issues are de-duplicated within an Initiative. <b>Pending = 100 − Completion.</b>
+                  </InfoTip>
+                </div>
+                <p className="text-xs text-slate-500">
+                  Portfolio average: <b>{initiativeCompletionAvg}%</b> complete · <b>{100 - initiativeCompletionAvg}%</b> pending
+                </p>
+              </div>
+              <div className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
+                <TrendingUp className="h-3.5 w-3.5" /> Rollup from Jira status
+              </div>
+            </div>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {initiativeSummaries.map((g) => (
+                <InitiativeCard key={g.key} g={g} />
+              ))}
+              {initiativeSummaries.length === 0 && (
+                <div className="col-span-full rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
+                  No Initiative data in the current CSV.
+                </div>
+              )}
+            </div>
+          </CardContent>
+        </Card>
+
+        {/* CHARTS ROW */}
         <div className="grid gap-4 lg:grid-cols-3">
           <Card className="rounded-2xl border-slate-200 shadow-sm lg:col-span-2">
             <CardContent className="p-4">
-              <h2 className="mb-4 font-semibold">Linked Issues by M&A</h2>
+              <div className="mb-4 flex items-center gap-2">
+                <h2 className="font-semibold">Completion vs Pending by M&amp;A</h2>
+                <InfoTip title="What this shows" side="right">
+                  Stacked bar of <b>Completion %</b> (green) vs <b>Pending %</b> (amber) for each Initiative.
+                  Driven by Jira statuses of epics, stories, sub-tasks and linked records under each RI.
+                  Use this to see which acquisitions still have material onboarding work.
+                </InfoTip>
+              </div>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={mnaChart} margin={{ top: 8, right: 12, left: 0, bottom: 48 }}>
-                    <XAxis dataKey="name" angle={-35} textAnchor="end" interval={0} height={70} fontSize={11} />
-                    <YAxis />
-                    <Tooltip />
-                    <Bar dataKey="linked" name="Linked Issues" radius={[8, 8, 0, 0]} />
-                    <Bar dataKey="zero" name="Zero-Link Parents" radius={[8, 8, 0, 0]} />
+                  <BarChart
+                    data={mnaChart}
+                    margin={{ top: 8, right: 12, left: 0, bottom: 48 }}
+                  >
+                    <XAxis
+                      dataKey="name"
+                      angle={-25}
+                      textAnchor="end"
+                      interval={0}
+                      height={70}
+                      fontSize={11}
+                    />
+                    <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
+                    <Tooltip
+                      formatter={(value, name) =>
+                        name === "completion" || name === "pending"
+                          ? [`${value}%`, name === "completion" ? "Completion" : "Pending"]
+                          : [value, name]
+                      }
+                    />
+                    <Bar
+                      dataKey="completion"
+                      stackId="pct"
+                      name="completion"
+                      fill="#10b981"
+                      radius={[0, 0, 0, 0]}
+                    >
+                      <LabelList
+                        dataKey="completion"
+                        position="insideTop"
+                        formatter={(v) => (v >= 12 ? `${v}%` : "")}
+                        fill="#ecfdf5"
+                        fontSize={11}
+                      />
+                    </Bar>
+                    <Bar
+                      dataKey="pending"
+                      stackId="pct"
+                      name="pending"
+                      fill="#f59e0b"
+                      radius={[8, 8, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -270,13 +726,26 @@ export default function MnaRiLinkedIssueDashboard() {
 
           <Card className="rounded-2xl border-slate-200 shadow-sm">
             <CardContent className="p-4">
-              <h2 className="mb-4 font-semibold">Parent Coverage</h2>
+              <div className="mb-4 flex items-center gap-2">
+                <h2 className="font-semibold">Parent Coverage</h2>
+                <InfoTip title="What this shows" side="left">
+                  Share of RIs that have at least one linked Jira issue vs RIs with none.
+                  Low coverage means dependencies aren't being mapped — a risk indicator for leadership.
+                </InfoTip>
+              </div>
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <PieChart>
-                    <Pie data={coverageData} dataKey="value" nameKey="name" outerRadius={90} label>
-                      <Cell />
-                      <Cell />
+                    <Pie
+                      data={coverageData}
+                      dataKey="value"
+                      nameKey="name"
+                      outerRadius={90}
+                      label
+                    >
+                      {coverageData.map((_, i) => (
+                        <Cell key={i} fill={PIE_COLORS[i]} />
+                      ))}
                     </Pie>
                     <Tooltip />
                   </PieChart>
@@ -288,15 +757,36 @@ export default function MnaRiLinkedIssueDashboard() {
 
         <Card className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="p-4">
-            <h2 className="mb-4 font-semibold">RI Coverage View</h2>
+            <div className="mb-4 flex items-center gap-2">
+              <h2 className="font-semibold">RI Coverage View</h2>
+              <InfoTip title="What this shows" side="right">
+                For each RI bucket (RI1–RI5, parsed from the <code>(RIn)</code> token in roadmap titles), the average completion across RIs in that bucket, plus how many linked issues and how many zero-link parents fall in it. Use it to compare onboarding workstreams across acquisitions.
+              </InfoTip>
+            </div>
             <div className="h-56">
               <ResponsiveContainer width="100%" height="100%">
                 <BarChart data={riChart}>
                   <XAxis dataKey="name" />
                   <YAxis />
                   <Tooltip />
-                  <Bar dataKey="linked" name="Linked Issues" radius={[8, 8, 0, 0]} />
-                  <Bar dataKey="zero" name="Zero-Link Parents" radius={[8, 8, 0, 0]} />
+                  <Bar
+                    dataKey="completion"
+                    name="Avg Completion %"
+                    radius={[8, 8, 0, 0]}
+                    fill="#10b981"
+                  />
+                  <Bar
+                    dataKey="linked"
+                    name="Linked Issues"
+                    radius={[8, 8, 0, 0]}
+                    fill="#0ea5e9"
+                  />
+                  <Bar
+                    dataKey="zero"
+                    name="Zero-Link Parents"
+                    radius={[8, 8, 0, 0]}
+                    fill="#f59e0b"
+                  />
                 </BarChart>
               </ResponsiveContainer>
             </div>
@@ -306,37 +796,88 @@ export default function MnaRiLinkedIssueDashboard() {
         <Card className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="p-4">
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
-              <div>
-                <h2 className="font-semibold">Detailed View</h2>
-                <p className="text-xs text-slate-500">Switch between expandable hierarchy and flat linked-issue table.</p>
+              <div className="flex items-center gap-2">
+                <div>
+                  <h2 className="font-semibold">Detailed View</h2>
+                  <p className="text-xs text-slate-500">
+                    Switch between expandable hierarchy and flat linked-issue table.
+                  </p>
+                </div>
+                <InfoTip title="How to read this" side="right">
+                  <b>Hierarchy</b>: SBR → Initiative → Roadmap Item → Epic → Story/Task → Sub-task → linked issues. Expand any node to see direct dependencies and statuses.
+                  <br />
+                  <b>Flat Links</b>: every RI-to-linked-issue pairing as a single table row, easy to scan for blockers and gaps.
+                  Filters below apply to both views.
+                </InfoTip>
               </div>
               <div className="flex flex-wrap gap-2">
-                <Button variant={viewMode === "hierarchy" ? "default" : "outline"} size="sm" onClick={() => setViewMode("hierarchy")} className="gap-2"><ChevronRight className="h-4 w-4" /> Hierarchy</Button>
-                <Button variant={viewMode === "flat" ? "default" : "outline"} size="sm" onClick={() => setViewMode("flat")}>Flat Links</Button>
-                {viewMode === "hierarchy" && <><Button variant="outline" size="sm" onClick={expandAll}>Expand All</Button><Button variant="outline" size="sm" onClick={collapseAll}>Collapse All</Button></>}
+                <Button
+                  variant={viewMode === "hierarchy" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("hierarchy")}
+                  className="gap-2"
+                >
+                  <ChevronRight className="h-4 w-4" /> Hierarchy
+                </Button>
+                <Button
+                  variant={viewMode === "flat" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setViewMode("flat")}
+                >
+                  Flat Links
+                </Button>
+                {viewMode === "hierarchy" && (
+                  <>
+                    <Button variant="outline" size="sm" onClick={expandAll}>
+                      Expand All
+                    </Button>
+                    <Button variant="outline" size="sm" onClick={collapseAll}>
+                      Collapse All
+                    </Button>
+                  </>
+                )}
               </div>
             </div>
             <div className="grid gap-3 md:grid-cols-4">
               <div className="relative md:col-span-1">
                 <Search className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-                <Input value={search} onChange={(e) => setSearch(e.target.value)} placeholder="Search key/title/status" className="pl-9" />
+                <Input
+                  value={search}
+                  onChange={(e) => setSearch(e.target.value)}
+                  placeholder="Search key/title/status"
+                  className="pl-9"
+                />
               </div>
               <Select value={mnaFilter} onValueChange={setMnaFilter}>
-                <SelectTrigger><SelectValue placeholder="M&A" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="M&A" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All M&As</SelectItem>
-                  {mnas.map((m) => <SelectItem key={m} value={m}>{m}</SelectItem>)}
+                  {mnas.map((m) => (
+                    <SelectItem key={m} value={m}>
+                      {m}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select value={riFilter} onValueChange={setRiFilter}>
-                <SelectTrigger><SelectValue placeholder="RI" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="RI" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All RIs</SelectItem>
-                  {ris.map((r) => <SelectItem key={r} value={r}>{r}</SelectItem>)}
+                  {ris.map((r) => (
+                    <SelectItem key={r} value={r}>
+                      {r}
+                    </SelectItem>
+                  ))}
                 </SelectContent>
               </Select>
               <Select value={riskFilter} onValueChange={setRiskFilter}>
-                <SelectTrigger><SelectValue placeholder="Risk" /></SelectTrigger>
+                <SelectTrigger>
+                  <SelectValue placeholder="Risk" />
+                </SelectTrigger>
                 <SelectContent>
                   <SelectItem value="all">All Records</SelectItem>
                   <SelectItem value="blocked">Blockers Only</SelectItem>
@@ -347,7 +888,16 @@ export default function MnaRiLinkedIssueDashboard() {
             </div>
 
             {viewMode === "hierarchy" ? (
-              <HierarchyView hierarchy={hierarchy} expanded={expanded} toggle={toggle} search={search} mnaFilter={mnaFilter} riFilter={riFilter} riskFilter={riskFilter} />
+              <HierarchyView
+                hierarchy={hierarchy}
+                expanded={expanded}
+                toggle={toggle}
+                search={search}
+                mnaFilter={mnaFilter}
+                riFilter={riFilter}
+                riskFilter={riskFilter}
+                rows={rows}
+              />
             ) : (
               <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
                 <table className="w-full border-collapse text-sm">
@@ -362,8 +912,19 @@ export default function MnaRiLinkedIssueDashboard() {
                   </thead>
                   <tbody>
                     {filteredParents.map((p) => {
-                      if (p.links.length === 0) return <ParentRow key={p.parent_key} p={p} link={null} />;
-                      return p.links.map((l, idx) => <ParentRow key={`${p.parent_key}-${l.linked_key}-${idx}`} p={p} link={l} showParent={idx === 0} rowSpan={p.links.length} />);
+                      if (p.links.length === 0)
+                        return (
+                          <ParentRow key={p.parent_key} p={p} link={null} />
+                        );
+                      return p.links.map((l, idx) => (
+                        <ParentRow
+                          key={`${p.parent_key}-${l.linked_key}-${idx}`}
+                          p={p}
+                          link={l}
+                          showParent={idx === 0}
+                          rowSpan={p.links.length}
+                        />
+                      ));
                     })}
                   </tbody>
                 </table>
@@ -376,41 +937,159 @@ export default function MnaRiLinkedIssueDashboard() {
   );
 }
 
+function InitiativeCard({ g }) {
+  const tone = completionTone(g.completion);
+  return (
+    <div className="relative rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="mb-2 flex items-start justify-between gap-2">
+        <div>
+          <div className="text-base font-semibold text-slate-900">{g.name}</div>
+          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+            {g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}
+          </div>
+        </div>
+        <InfoTip title={`${g.name} rollup`} side="left">
+          Completion is the avg of this Initiative's {g.riCount} RI{g.riCount === 1 ? "" : "s"}. Each RI is scored from its child epics / stories / sub-tasks plus de-duped linked issues — Done/Closed/Resolved/Cancelled count as complete. Pending = 100 − Completion.
+        </InfoTip>
+      </div>
+      <div className="flex items-baseline gap-2">
+        <span className={`text-3xl font-bold ${tone.text}`}>{g.completion}%</span>
+        <span className="text-xs text-slate-500">complete</span>
+      </div>
+      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div
+          className={`h-full ${tone.bg} transition-all`}
+          style={{ width: `${g.completion}%` }}
+        />
+      </div>
+      <div className="mt-2 flex items-center justify-between text-xs">
+        <span className="text-slate-600">
+          Pending: <b className="text-slate-900">{g.pending}%</b>
+        </span>
+        <span className="text-slate-500">
+          {g.linkedIssues} linked · {g.zeroLinkRis} zero-link
+        </span>
+      </div>
+    </div>
+  );
+}
+
 function buildHierarchy(rows) {
-  const initiatives = new Map();
+  const sbrs = new Map();
+  const SYNTHETIC = "__no-sbr__";
   rows.forEach((r, idx) => {
-    const initiativeKey = pick(r, ["initiative_key", "mna_key"]) || getInitiative(r) || "Unknown Initiative";
+    const sbrKey = pick(r, ["sbr_key"]);
+    const sbrTitle = pick(r, ["sbr_title"]);
+    const sbrStatus = pick(r, ["sbr_status"]);
+
+    const initiativeKey =
+      pick(r, ["initiative_key", "mna_key"]) ||
+      getInitiative(r) ||
+      "Unknown Initiative";
     const initiativeTitle = getInitiative(r) || initiativeKey;
     const initiativeStatus = pick(r, ["initiative_status", "mna_status"]);
+
     const roadmapKey = getParentKey(r) || `roadmap-${idx}`;
     const roadmapTitle = getParentTitle(r) || roadmapKey;
     const roadmapStatus = getParentStatus(r);
+
     const epicKey = pick(r, ["epic_key", "epic"]);
     const epicTitle = pick(r, ["epic_title", "epic_summary"]);
     const epicStatus = pick(r, ["epic_status"]);
+
     const storyKey = pick(r, ["story_key", "story", "issue_key"]);
     const storyTitle = pick(r, ["story_title", "story_summary", "issue_title"]);
     const storyStatus = pick(r, ["story_status", "issue_status"]);
+    const storyType = pick(r, ["story_issuetype"]) || "Story";
 
-    if (!initiatives.has(initiativeKey)) initiatives.set(initiativeKey, makeNode("initiative", initiativeKey, initiativeTitle, initiativeStatus));
-    const initiative = initiatives.get(initiativeKey);
-    const roadmap = getOrCreateChild(initiative, "roadmap", roadmapKey, roadmapTitle, roadmapStatus);
+    const subtaskKey = pick(r, ["subtask_key"]);
+    const subtaskTitle = pick(r, ["subtask_title"]);
+    const subtaskStatus = pick(r, ["subtask_status"]);
+    const subtaskType = pick(r, ["subtask_issuetype"]) || "Sub-task";
+
+    const topKey = sbrKey || SYNTHETIC;
+    if (!sbrs.has(topKey)) {
+      sbrs.set(
+        topKey,
+        sbrKey
+          ? makeNode("sbr", sbrKey, sbrTitle || sbrKey, sbrStatus)
+          : makeNode("group", SYNTHETIC, "Initiatives", ""),
+      );
+    }
+    const top = sbrs.get(topKey);
+    const initiative = getOrCreateChild(
+      top,
+      "initiative",
+      initiativeKey,
+      initiativeTitle,
+      initiativeStatus,
+    );
+    const roadmap = getOrCreateChild(
+      initiative,
+      "roadmap",
+      roadmapKey,
+      roadmapTitle,
+      roadmapStatus,
+    );
     let attachNode = roadmap;
-    if (epicKey) attachNode = getOrCreateChild(roadmap, "epic", epicKey, epicTitle || epicKey, epicStatus);
-    if (storyKey) attachNode = getOrCreateChild(attachNode, "story", storyKey, storyTitle || storyKey, storyStatus);
-    if (r.linked_key) attachNode.links.push(r);
+    if (epicKey)
+      attachNode = getOrCreateChild(
+        attachNode,
+        "epic",
+        epicKey,
+        epicTitle || epicKey,
+        epicStatus,
+      );
+    if (storyKey)
+      attachNode = getOrCreateChild(
+        attachNode,
+        storyType.toLowerCase().includes("task") &&
+          !storyType.toLowerCase().includes("sub")
+          ? "task"
+          : "story",
+        storyKey,
+        storyTitle || storyKey,
+        storyStatus,
+        storyType,
+      );
+    if (subtaskKey)
+      attachNode = getOrCreateChild(
+        attachNode,
+        "subtask",
+        subtaskKey,
+        subtaskTitle || subtaskKey,
+        subtaskStatus,
+        subtaskType,
+      );
+
+    const linkType = (r.link_type || "").toUpperCase().trim();
+    if (r.linked_key && linkType !== "NO LINKS") attachNode.links.push(r);
   });
-  return Array.from(initiatives.values());
+
+  // If there was no real SBR anywhere, return flat list of Initiatives.
+  if (sbrs.size === 1 && sbrs.has(SYNTHETIC)) {
+    return sbrs.get(SYNTHETIC).children;
+  }
+  return Array.from(sbrs.values());
 }
 
-function makeNode(type, key, title, status) {
-  return { id: `${type}:${key}`, type, key, title, status, children: [], links: [] };
+function makeNode(type, key, title, status, issuetype) {
+  return {
+    id: `${type}:${key}`,
+    type,
+    key,
+    title,
+    status,
+    issuetype: issuetype || "",
+    children: [],
+    links: [],
+  };
 }
 
-function getOrCreateChild(parent, type, key, title, status) {
+function getOrCreateChild(parent, type, key, title, status, issuetype) {
   let node = parent.children.find((c) => c.type === type && c.key === key);
   if (!node) {
-    node = makeNode(type, key, title, status);
+    node = makeNode(type, key, title, status, issuetype);
     parent.children.push(node);
   }
   return node;
@@ -423,77 +1102,218 @@ function collectLinks(node) {
 function nodeHasRisk(node, riskFilter) {
   const allLinks = collectLinks(node);
   if (riskFilter === "all") return true;
-  if (riskFilter === "blocked") return allLinks.some((l) => (l.link_type || "").toLowerCase().includes("block"));
-  if (riskFilter === "gap") return allLinks.some((l) => /\[gap\]|gap/i.test(l.linked_title || ""));
+  if (riskFilter === "blocked")
+    return allLinks.some((l) =>
+      (l.link_type || "").toLowerCase().includes("block"),
+    );
+  if (riskFilter === "gap")
+    return allLinks.some((l) => /\[gap\]|gap/i.test(l.linked_title || ""));
   if (riskFilter === "zero") return allLinks.length === 0;
   return true;
 }
 
 function nodeMatches(node, search, mnaFilter, riFilter, riskFilter) {
   const q = search.toLowerCase();
-  const text = `${node.key} ${node.title} ${node.status} ${collectLinks(node).map((l) => `${l.linked_key} ${l.linked_title} ${l.linked_status} ${l.link_type}`).join(" ")}`.toLowerCase();
+  const text =
+    `${node.key} ${node.title} ${node.status} ${collectLinks(node)
+      .map(
+        (l) =>
+          `${l.linked_key} ${l.linked_title} ${l.linked_status} ${l.link_type}`,
+      )
+      .join(" ")}`.toLowerCase();
   const searchOk = !q || text.includes(q);
-  const mnaOk = mnaFilter === "all" || node.title === mnaFilter || text.includes(mnaFilter.toLowerCase());
+  const mnaOk =
+    mnaFilter === "all" ||
+    node.title === mnaFilter ||
+    text.includes(mnaFilter.toLowerCase());
   const riOk = riFilter === "all" || text.includes(riFilter.toLowerCase());
   return searchOk && mnaOk && riOk && nodeHasRisk(node, riskFilter);
 }
 
-function HierarchyView({ hierarchy, expanded, toggle, search, mnaFilter, riFilter, riskFilter }) {
+const TYPE_LABEL = {
+  sbr: "SBR",
+  group: "Group",
+  initiative: "Initiative",
+  roadmap: "Roadmap Item",
+  epic: "Epic",
+  story: "Story",
+  task: "Task",
+  subtask: "Sub-task",
+};
+
+function HierarchyView({
+  hierarchy,
+  expanded,
+  toggle,
+  search,
+  mnaFilter,
+  riFilter,
+  riskFilter,
+  rows,
+}) {
   return (
     <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
-      {hierarchy.filter((n) => nodeMatches(n, search, mnaFilter, riFilter, riskFilter)).map((node) => (
-        <TreeNode key={node.id} node={node} depth={0} expanded={expanded} toggle={toggle} search={search} mnaFilter={mnaFilter} riFilter={riFilter} riskFilter={riskFilter} />
-      ))}
+      {hierarchy
+        .filter((n) => nodeMatches(n, search, mnaFilter, riFilter, riskFilter))
+        .map((node) => (
+          <TreeNode
+            key={node.id}
+            node={node}
+            depth={0}
+            expanded={expanded}
+            toggle={toggle}
+            search={search}
+            mnaFilter={mnaFilter}
+            riFilter={riFilter}
+            riskFilter={riskFilter}
+            rows={rows}
+          />
+        ))}
     </div>
   );
 }
 
-function TreeNode({ node, depth, expanded, toggle, search, mnaFilter, riFilter, riskFilter }) {
+function TreeNode({
+  node,
+  depth,
+  expanded,
+  toggle,
+  search,
+  mnaFilter,
+  riFilter,
+  riskFilter,
+  rows,
+}) {
   const isOpen = !!expanded[node.id];
-  const visibleChildren = node.children.filter((n) => nodeMatches(n, search, mnaFilter, riFilter, riskFilter));
+  const visibleChildren = node.children.filter((n) =>
+    nodeMatches(n, search, mnaFilter, riFilter, riskFilter),
+  );
   const links = collectLinks(node);
   const directLinks = node.links;
   const hasKids = visibleChildren.length > 0 || directLinks.length > 0;
-  const typeLabel = { initiative: "Initiative", roadmap: "Roadmap Item", epic: "Epic", story: "Story" }[node.type] || node.type;
+  const typeLabel =
+    node.issuetype || TYPE_LABEL[node.type] || node.type;
+
+  let completion = null;
+  if (node.type === "initiative") {
+    completion = calculateInitiativeCompletion(rows, node.key);
+  } else if (node.type === "roadmap") {
+    completion = calculateRICompletion(rows, node.key);
+  }
+
   return (
     <div>
-      <div className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50" style={{ paddingLeft: `${depth * 24 + 8}px` }}>
-        <button onClick={() => toggle(node.id)} className="rounded p-1 hover:bg-slate-100" disabled={!hasKids}>
-          {hasKids ? (isOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />) : <span className="inline-block h-4 w-4" />}
+      <div
+        className="flex items-center gap-3 rounded-xl px-2 py-2 hover:bg-slate-50"
+        style={{ paddingLeft: `${depth * 24 + 8}px` }}
+      >
+        <button
+          onClick={() => toggle(node.id)}
+          className="rounded p-1 hover:bg-slate-100"
+          disabled={!hasKids}
+        >
+          {hasKids ? (
+            isOpen ? (
+              <ChevronDown className="h-4 w-4" />
+            ) : (
+              <ChevronRight className="h-4 w-4" />
+            )
+          ) : (
+            <span className="inline-block h-4 w-4" />
+          )}
         </button>
         <Badge variant="outline">{typeLabel}</Badge>
         <div className="min-w-28 font-semibold">{node.key}</div>
         <div className="flex-1 text-slate-700">{node.title}</div>
-        {node.status && <Badge className={`${statusTone(node.status)} border`}>{node.status}</Badge>}
-        <Badge variant={links.length ? "secondary" : "outline"}>{links.length} links</Badge>
-        {links.some((l) => (l.link_type || "").toLowerCase().includes("block")) && <Badge variant="destructive">blocked</Badge>}
+        {node.status && (
+          <Badge className={`${statusTone(node.status)} border`}>
+            {node.status}
+          </Badge>
+        )}
+        {completion !== null && (
+          <Badge className={`${completionTone(completion).bg} text-white border-transparent`}>
+            {completion}%
+          </Badge>
+        )}
+        <Badge variant={links.length ? "secondary" : "outline"}>
+          {links.length} links
+        </Badge>
+        {links.some((l) =>
+          (l.link_type || "").toLowerCase().includes("block"),
+        ) && <Badge variant="destructive">blocked</Badge>}
       </div>
       {isOpen && directLinks.length > 0 && (
         <div className="ml-12 mr-2 overflow-hidden rounded-xl border border-slate-100 bg-slate-50">
           {directLinks.map((l, idx) => (
-            <div key={`${node.id}-${l.linked_key}-${idx}`} className="grid grid-cols-12 gap-2 border-t border-slate-100 p-2 text-xs first:border-t-0">
+            <div
+              key={`${node.id}-${l.linked_key}-${idx}`}
+              className="grid grid-cols-12 gap-2 border-t border-slate-100 p-2 text-xs first:border-t-0"
+            >
               <div className="col-span-2 font-semibold">{l.linked_key}</div>
               <div className="col-span-6">{l.linked_title}</div>
-              <div className="col-span-2"><Badge className={`${statusTone(l.linked_status)} border`}>{l.linked_status || "Unknown"}</Badge></div>
-              <div className="col-span-2"><Badge variant={(l.link_type || "").toLowerCase().includes("block") ? "destructive" : "secondary"}>{l.link_type}</Badge></div>
+              <div className="col-span-2">
+                <Badge className={`${statusTone(l.linked_status)} border`}>
+                  {l.linked_status || "Unknown"}
+                </Badge>
+              </div>
+              <div className="col-span-2">
+                <Badge
+                  variant={
+                    (l.link_type || "").toLowerCase().includes("block")
+                      ? "destructive"
+                      : "secondary"
+                  }
+                >
+                  {l.link_type}
+                </Badge>
+              </div>
             </div>
           ))}
         </div>
       )}
-      {isOpen && visibleChildren.map((child) => <TreeNode key={child.id} node={child} depth={depth + 1} expanded={expanded} toggle={toggle} search={search} mnaFilter={mnaFilter} riFilter={riFilter} riskFilter={riskFilter} />)}
+      {isOpen &&
+        visibleChildren.map((child) => (
+          <TreeNode
+            key={child.id}
+            node={child}
+            depth={depth + 1}
+            expanded={expanded}
+            toggle={toggle}
+            search={search}
+            mnaFilter={mnaFilter}
+            riFilter={riFilter}
+            riskFilter={riskFilter}
+            rows={rows}
+          />
+        ))}
     </div>
   );
 }
 
-function Metric({ title, value, icon, warn }) {
+function Metric({ title, value, icon, warn, tip }) {
   return (
     <Card className="rounded-2xl border-slate-200 shadow-sm">
       <CardContent className="flex items-center justify-between p-4">
         <div>
-          <div className="text-xs font-medium uppercase tracking-wide text-slate-500">{title}</div>
+          <div className="flex items-center gap-1.5">
+            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
+              {title}
+            </div>
+            {tip && (
+              <InfoTip title={title} side="right">
+                {tip}
+              </InfoTip>
+            )}
+          </div>
           <div className="mt-1 text-2xl font-bold">{value}</div>
         </div>
-        <div className={`rounded-2xl p-2 ${warn ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-700"}`}>{React.cloneElement(icon, { className: "h-5 w-5" })}</div>
+        <div
+          className={`rounded-2xl p-2 ${
+            warn ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-700"
+          }`}
+        >
+          {React.cloneElement(icon, { className: "h-5 w-5" })}
+        </div>
       </CardContent>
     </Card>
   );
@@ -506,19 +1326,53 @@ function ParentRow({ p, link, showParent = true, rowSpan = 1 }) {
         <td className="p-3" rowSpan={rowSpan}>
           <div className="font-semibold text-slate-900">{p.parent_key}</div>
           <div className="max-w-md text-slate-700">{p.parent_title}</div>
-          <div className="mt-1 flex gap-1"><Badge variant="outline">{p.mna}</Badge><Badge variant="outline">{p.ri}</Badge></div>
+          <div className="mt-1 flex gap-1">
+            <Badge variant="outline">{p.mna}</Badge>
+            <Badge variant="outline">{p.ri}</Badge>
+          </div>
         </td>
       )}
       {showParent && (
         <td className="p-3" rowSpan={rowSpan}>
-          <Badge className={`${statusTone(p.parent_status)} border`}>{p.parent_status || "Unknown"}</Badge>
+          <Badge className={`${statusTone(p.parent_status)} border`}>
+            {p.parent_status || "Unknown"}
+          </Badge>
         </td>
       )}
       <td className="p-3">
-        {link ? <><div className="font-semibold">{link.linked_key}</div><div className="max-w-xl text-slate-700">{link.linked_title}</div></> : <span className="font-medium text-amber-700">No linked issues</span>}
+        {link ? (
+          <>
+            <div className="font-semibold">{link.linked_key}</div>
+            <div className="max-w-xl text-slate-700">{link.linked_title}</div>
+          </>
+        ) : (
+          <span className="font-medium text-amber-700">No linked issues</span>
+        )}
       </td>
-      <td className="p-3">{link ? <Badge className={`${statusTone(link.linked_status)} border`}>{link.linked_status || "Unknown"}</Badge> : ""}</td>
-      <td className="p-3">{link ? <Badge variant={(link.link_type || "").toLowerCase().includes("block") ? "destructive" : "secondary"}>{link.link_type}</Badge> : ""}</td>
+      <td className="p-3">
+        {link ? (
+          <Badge className={`${statusTone(link.linked_status)} border`}>
+            {link.linked_status || "Unknown"}
+          </Badge>
+        ) : (
+          ""
+        )}
+      </td>
+      <td className="p-3">
+        {link ? (
+          <Badge
+            variant={
+              (link.link_type || "").toLowerCase().includes("block")
+                ? "destructive"
+                : "secondary"
+            }
+          >
+            {link.link_type}
+          </Badge>
+        ) : (
+          ""
+        )}
+      </td>
     </tr>
   );
 }
