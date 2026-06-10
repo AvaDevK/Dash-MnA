@@ -56,6 +56,30 @@ After ~1 min you'll get a URL like `https://dash-mn-a.vercel.app/`. Open it — 
 
 Send the link AND the password via separate channels (e.g., link in email, password in Teams DM or Slack). Anyone with the URL still cannot view the data without the password.
 
+## Live Jira pull (optional)
+
+The dashboard ships with a serverless endpoint at `/api/jira-export` that runs a JQL query against Avalara Jira and returns CSV in the dashboard's schema. To enable it, add these env vars in Vercel → Project → Settings → Environment Variables:
+
+| Name | Value |
+|---|---|
+| `JIRA_BASE_URL` | `https://avalara.atlassian.net` |
+| `JIRA_EMAIL` | The Atlassian account email the API token belongs to (use a service account if you have one). |
+| `JIRA_API_TOKEN` | Create at https://id.atlassian.com/manage-profile/security/api-tokens. Token must have read access to the relevant projects. |
+
+After adding the vars, redeploy. Then in the dashboard, click **Data Source → Live Jira**, type a JQL like:
+
+```
+issuekey = SBR-356 OR parent = SBR-356
+```
+
+…and hit **Pull from Jira**. The function paginates up to 5000 issues and returns CSV with one row per linked-issue. Empty `linked_*` columns get `link_type = NO LINKS`. The mapping is best-effort: the function detects hierarchy level by Jira issue type name (Initiative, Roadmap Item, Epic, Story/Task, Sub-task) and fills the corresponding `*_key/_title/_status` columns. Tune the JQL to scope what gets pulled.
+
+Same-origin requests pass Basic Auth automatically (the browser caches it once the user signs in to the dashboard), so the endpoint is gated by the same `DASH_USER` / `DASH_PASSWORD` as the rest of the site.
+
+## Live Pull via Glean Agent (optional)
+
+The `Live Pull` tab embeds Avalara's Glean agent (`agentId: 4c8533e8373b41edbde22d6f5793d4d4`) via the official `embedded-search-latest.min.js` SDK. Viewers must be signed into Glean Avalara SSO for the embed to render — otherwise they'll see a Glean sign-in screen inside the panel. No additional env vars or secrets are required.
+
 ## Updating the password / user later
 
 Vercel dashboard → Project → Settings → Environment Variables → edit `DASH_PASSWORD` → "Redeploy" the latest deployment for the change to take effect.

@@ -26,6 +26,8 @@ import {
   FilePlus,
   X,
   TrendingUp,
+  RefreshCw,
+  Loader2,
 } from "lucide-react";
 import {
   BarChart,
@@ -41,6 +43,7 @@ import {
 } from "recharts";
 import InfoTip from "@/components/InfoTip";
 import JiraLink from "@/components/JiraLink";
+import GleanAgent from "@/components/GleanAgent";
 import {
   ExecutivePortfolio,
   DataQuality,
@@ -196,6 +199,10 @@ export default function MnaRiLinkedIssueDashboard() {
   const [uploadError, setUploadError] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef(null);
+  const [jiraJql, setJiraJql] = useState("issuekey = SBR-356 OR parent = SBR-356");
+  const [jiraLoading, setJiraLoading] = useState(false);
+  const [jiraError, setJiraError] = useState("");
+  const [jiraLastPulled, setJiraLastPulled] = useState(0);
 
   const [search, setSearch] = useState("");
   const [selectedMnas, setSelectedMnas] = useState(() => new Set());
@@ -485,6 +492,42 @@ export default function MnaRiLinkedIssueDashboard() {
     if (fileInputRef.current) fileInputRef.current.value = "";
   }
 
+  async function pullFromJira() {
+    setJiraLoading(true);
+    setJiraError("");
+    try {
+      const resp = await fetch("/api/jira-export", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ jql: jiraJql }),
+      });
+      if (!resp.ok) {
+        let msg = `HTTP ${resp.status}`;
+        try {
+          const j = await resp.json();
+          if (j.error) msg = j.error;
+        } catch {
+          /* ignore */
+        }
+        throw new Error(msg);
+      }
+      const text = await resp.text();
+      const lines = text.split(/\r?\n/).filter(Boolean);
+      if (lines.length <= 1) {
+        throw new Error("Jira returned 0 issues for that JQL.");
+      }
+      setCsvText(text);
+      setUploadedFileName(`Jira live: ${jiraJql.slice(0, 60)}${jiraJql.length > 60 ? "…" : ""}`);
+      setUploadError("");
+      setLoadedAt(Date.now());
+      setJiraLastPulled(Date.now());
+    } catch (err) {
+      setJiraError(err.message || String(err));
+    } finally {
+      setJiraLoading(false);
+    }
+  }
+
   return (
     <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -510,6 +553,7 @@ export default function MnaRiLinkedIssueDashboard() {
             { id: "overview", label: "Overview" },
             { id: "executive", label: "Executive Portfolio" },
             { id: "quality", label: "Data Quality" },
+            { id: "live", label: "Live Pull" },
           ].map((t) => (
             <Button
               key={t.id}
@@ -591,6 +635,14 @@ export default function MnaRiLinkedIssueDashboard() {
                   <Upload className="h-4 w-4" /> Upload CSV
                 </Button>
                 <Button
+                  variant={inputMode === "jira" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => setInputMode("jira")}
+                  className="gap-2"
+                >
+                  <RefreshCw className="h-4 w-4" /> Live Jira
+                </Button>
+                <Button
                   variant="ghost"
                   size="sm"
                   onClick={resetToSample}
@@ -601,7 +653,7 @@ export default function MnaRiLinkedIssueDashboard() {
               </div>
             </div>
 
-            {inputMode === "paste" ? (
+            {inputMode === "paste" && (
               <Textarea
                 value={csvText}
                 onChange={(e) => {
@@ -612,7 +664,58 @@ export default function MnaRiLinkedIssueDashboard() {
                 className="min-h-40 font-mono text-xs"
                 placeholder="Paste CSV. Supported headers: sbr_*, initiative_*, roadmap_*, epic_*, story_*, subtask_*, source_issue_*, linked_*, link_direction, link_type. Legacy parent_* CSV also works."
               />
-            ) : (
+            )}
+            {inputMode === "jira" && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    JQL
+                  </label>
+                  <InfoTip title="Live Jira pull" side="right">
+                    Hits <code>/api/jira-export</code> (server-side, basic-auth via Vercel env vars). The function runs your JQL against Avalara Jira and returns CSV in this dashboard's schema. Each issue produces one row per linked issue (or a single <code>NO LINKS</code> row).
+                  </InfoTip>
+                </div>
+                <Input
+                  value={jiraJql}
+                  onChange={(e) => setJiraJql(e.target.value)}
+                  placeholder='e.g. issuekey = SBR-356 OR parent = SBR-356'
+                  className="font-mono text-xs"
+                />
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={pullFromJira}
+                    disabled={jiraLoading || !jiraJql.trim()}
+                    className="gap-2"
+                  >
+                    {jiraLoading ? (
+                      <Loader2 className="h-4 w-4 animate-spin" />
+                    ) : (
+                      <RefreshCw className="h-4 w-4" />
+                    )}
+                    {jiraLoading ? "Pulling..." : "Pull from Jira"}
+                  </Button>
+                  {jiraLastPulled > 0 && !jiraError && (
+                    <span className="text-xs text-slate-500">
+                      Last pulled {new Date(jiraLastPulled).toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+                {jiraError && (
+                  <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold">Jira pull failed</div>
+                      <div className="text-xs">{jiraError}</div>
+                      <div className="mt-1 text-[11px] text-rose-700">
+                        Ensure <code>JIRA_BASE_URL</code>, <code>JIRA_EMAIL</code>, <code>JIRA_API_TOKEN</code> are set in Vercel env vars and the JQL is valid.
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {inputMode === "upload" && (
               <div className="space-y-3">
                 <label
                   htmlFor="csv-upload-input"
@@ -1016,6 +1119,7 @@ export default function MnaRiLinkedIssueDashboard() {
 
         {activeTab === "executive" && <ExecutivePortfolio rows={filteredRows} />}
         {activeTab === "quality" && <DataQuality rows={filteredRows} />}
+        {activeTab === "live" && <GleanAgent />}
 
         <SourceBanner rows={rows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} />
       </div>
