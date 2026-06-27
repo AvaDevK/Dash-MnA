@@ -1564,8 +1564,8 @@ export default function MnaRiLinkedIssueDashboard() {
         </Card>
         </>)}
 
-        {activeTab === "executive" && <ExecutivePortfolio rows={effectiveRows} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />}
-        {activeTab === "quality" && <DataQuality rows={effectiveRows} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />}
+        {activeTab === "executive" && <ExecutivePortfolio rows={effectiveRows} onNavigate={(name) => { if (name) setSelectedMnas(new Set([name])); }} />}
+        {activeTab === "quality" && <DataQuality rows={effectiveRows} onNavigate={(name) => { if (name) setSelectedMnas(new Set([name])); }} />}
         {activeTab === "live" && <GleanAgent />}
 
         <SourceBanner rows={effectiveRows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} inputMode={inputMode} apiData={apiData} sbrKey={sbrKey} />
