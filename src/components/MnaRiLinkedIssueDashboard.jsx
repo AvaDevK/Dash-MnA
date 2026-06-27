@@ -1,4 +1,5 @@
-import React, { useMemo, useRef, useState, useEffect } from "react";
+import React, { useMemo, useRef, useState, useEffect, useCallback } from "react";
+import SbrPicker from "./SbrPicker";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -831,46 +832,19 @@ export default function MnaRiLinkedIssueDashboard() {
             <p className="mt-1 text-sm text-slate-500">
               Hierarchy dashboard for any SBR · Initiative → Roadmap Item → Epic → Story → linked Jira issues · Snowflake-first with Jira REST fallback
             </p>
-            <div className="mt-3 flex items-center gap-2">
-              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">SBR:</label>
-              <input
-                type="text"
-                value={sbrInput}
-                onChange={(e) => setSbrInput(e.target.value.toUpperCase())}
-                onKeyDown={(e) => {
-                  if (e.key === "Enter") {
-                    const val = sbrInput.trim().toUpperCase();
-                    if (val) {
-                      setSbrKey(val);
-                      setJiraJql(`parent = ${val} ORDER BY key ASC`);
-                      if (inputMode === "api") pullFromApi(true, val);
-                    }
-                  }
+            <div className="mt-3 flex items-center gap-2 flex-wrap">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide shrink-0">SBR:</label>
+              <SbrPicker
+                value={sbrKey}
+                onChange={(val) => {
+                  setSbrKey(val);
+                  setSbrInput(val);
+                  setJiraJql(`parent = ${val} ORDER BY key ASC`);
                 }}
-                placeholder="e.g. SBR-356"
-                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2"
-                style={{ width: 140 }}
+                onLoad={(val) => {
+                  if (inputMode === "api") pullFromApi(true, val);
+                }}
               />
-              <button
-                type="button"
-                onClick={() => {
-                  const val = sbrInput.trim().toUpperCase();
-                  if (val) {
-                    setSbrKey(val);
-                    setJiraJql(`parent = ${val} ORDER BY key ASC`);
-                    if (inputMode === "api") pullFromApi(true, val);
-                  }
-                }}
-                className="rounded-lg px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
-                style={{ background: AV.orange }}
-              >
-                Load SBR
-              </button>
-              {sbrKey && (
-                <span className="rounded-full px-2.5 py-1 text-xs font-semibold text-white" style={{ background: AV.navy }}>
-                  {sbrKey}
-                </span>
-              )}
             </div>
           </div>
           <div className="flex items-center gap-2">
