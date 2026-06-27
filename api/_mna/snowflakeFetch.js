@@ -195,6 +195,11 @@ async function fetchFromRoadmapTree(sbr) {
 }
 
 async function fetchMnacSeed(sbr) {
+  // For SBR-356 (MNAC project), mirror V2's faster project-key filter.
+  // For other SBRs, fall back to parent-key traversal.
+  if (sbr === "SBR-356") {
+    return fetchIssuesWhere(`FIELDS:"project":"key"::STRING = 'MNAC' AND KEY != 'MNAC-90'`);
+  }
   return fetchIssuesWhere(`FIELDS:"parent":"key"::STRING = ? OR KEY = ?`, [sbr, sbr]);
 }
 
