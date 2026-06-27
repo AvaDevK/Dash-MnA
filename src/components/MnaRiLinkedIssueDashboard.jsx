@@ -25,6 +25,9 @@ import {
   ChevronDown,
   FileSpreadsheet,
   FilePlus,
+  Maximize2,
+  Minimize2,
+  ArrowUp,
   X,
   TrendingUp,
   RefreshCw,
@@ -355,6 +358,10 @@ export default function MnaRiLinkedIssueDashboard() {
   const [viewMode, setViewMode] = useState("hierarchy");
   const [activeTab, setActiveTab] = useState("overview");
   const [loadedAt, setLoadedAt] = useState(() => Date.now());
+  const [expandedSections, setExpandedSections] = useState({ initiatives: false, flatLinks: false, hierarchy: false });
+  const toggleSection = (key) => setExpandedSections((s) => ({ ...s, [key]: !s[key] }));
+  const filterBarRef = useRef(null);
+  const [showBackBtn, setShowBackBtn] = useState(false);
 
   const rows = useMemo(() => parseCSV(csvText), [csvText]);
 
@@ -825,6 +832,13 @@ export default function MnaRiLinkedIssueDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Show floating back-to-filters button after scrolling past the filter bar
+  useEffect(() => {
+    const onScroll = () => setShowBackBtn(window.scrollY > 320);
+    window.addEventListener("scroll", onScroll, { passive: true });
+    return () => window.removeEventListener("scroll", onScroll);
+  }, []);
+
   return (
     <div className="min-h-screen bg-gray-50 p-6 text-slate-900">
       <div className="mx-auto max-w-7xl space-y-6">
@@ -898,7 +912,7 @@ export default function MnaRiLinkedIssueDashboard() {
         </div>
 
         {(isApiMode ? apiMnas : mnas).length > 0 && (
-          <Card className="rounded-2xl border-slate-200 shadow-sm">
+          <Card ref={filterBarRef} className="rounded-2xl border-slate-200 shadow-sm">
             <CardContent className="flex flex-wrap items-center gap-2 p-3">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                 Filter by Initiative
@@ -1246,11 +1260,20 @@ export default function MnaRiLinkedIssueDashboard() {
                   Portfolio average: <b style={{ color: AV.orange }}>{isApiMode ? apiCompletionAvg : initiativeCompletionAvg}%</b> complete · <b style={{ color: AV.orange }}>{100 - (isApiMode ? apiCompletionAvg : initiativeCompletionAvg)}%</b> pending
                 </p>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium text-white" style={{ background: AV.navy }}>
-                <TrendingUp className="h-3.5 w-3.5" /> {isApiMode ? `Rollup from ${apiData?.repoHealth?.sourceLabel ?? "API"}` : "Rollup from Jira status"}
+              <div className="flex items-center gap-2">
+                <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium text-white" style={{ background: AV.navy }}>
+                  <TrendingUp className="h-3.5 w-3.5" /> {isApiMode ? `Rollup from ${apiData?.repoHealth?.sourceLabel ?? "API"}` : "Rollup from Jira status"}
+                </div>
+                <button
+                  onClick={() => toggleSection("initiatives")}
+                  className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
+                  title={expandedSections.initiatives ? "Collapse" : "Expand all cards"}
+                >
+                  {expandedSections.initiatives ? <><Minimize2 className="h-3 w-3" /> Collapse</> : <><Maximize2 className="h-3 w-3" /> Show All</>}
+                </button>
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
+            <div className={`grid gap-3 sm:grid-cols-2 ${expandedSections.initiatives ? "lg:grid-cols-4 xl:grid-cols-5" : "lg:grid-cols-3 xl:grid-cols-4"}`}>
               {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).map((g) => (
                 <InitiativeCard key={g.key} g={g} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />
               ))}
@@ -1477,6 +1500,15 @@ export default function MnaRiLinkedIssueDashboard() {
                     </Button>
                   </>
                 )}
+                <button
+                  onClick={() => toggleSection(viewMode === "hierarchy" ? "hierarchy" : "flatLinks")}
+                  className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
+                  title={(viewMode === "hierarchy" ? expandedSections.hierarchy : expandedSections.flatLinks) ? "Collapse" : "Full view"}
+                >
+                  {(viewMode === "hierarchy" ? expandedSections.hierarchy : expandedSections.flatLinks)
+                    ? <><Minimize2 className="h-3 w-3" /> Collapse</>
+                    : <><Maximize2 className="h-3 w-3" /> Full View</>}
+                </button>
               </div>
             </div>
             <div className="grid gap-3 md:grid-cols-3">
@@ -1525,10 +1557,11 @@ export default function MnaRiLinkedIssueDashboard() {
                 riFilter={riFilter}
                 riskFilter={riskFilter}
                 rows={isApiMode ? [] : filteredRows}
+                fullHeight={expandedSections.hierarchy}
               />
             ) : (
               <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
-                <div className="max-h-[540px] overflow-auto">
+                <div className={expandedSections.flatLinks ? "overflow-auto" : "max-h-[540px] overflow-auto"}>
                 <table className="w-full border-collapse text-sm">
                   <thead style={{ background: AV.navy }} className="sticky top-0 z-10">
                     <tr>
@@ -1570,6 +1603,18 @@ export default function MnaRiLinkedIssueDashboard() {
 
         <SourceBanner rows={effectiveRows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} inputMode={inputMode} apiData={apiData} sbrKey={sbrKey} />
       </div>
+
+      {/* Floating back-to-filters button */}
+      {showBackBtn && (
+        <button
+          onClick={() => filterBarRef.current?.scrollIntoView({ behavior: "smooth", block: "center" })}
+          className="fixed bottom-6 right-6 z-50 flex items-center gap-2 rounded-full px-4 py-2.5 text-sm font-semibold text-white shadow-xl transition hover:scale-105 active:scale-95"
+          style={{ background: AV.navy }}
+          title="Back to initiative filters"
+        >
+          <ArrowUp className="h-4 w-4" /> Filters
+        </button>
+      )}
     </div>
   );
 }
@@ -1808,9 +1853,10 @@ function HierarchyView({
   riFilter,
   riskFilter,
   rows,
+  fullHeight,
 }) {
   return (
-    <div className="mt-4 max-h-[640px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3">
+    <div className={`mt-4 ${fullHeight ? "" : "max-h-[640px]"} overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3`}>
       {hierarchy
         .filter((n) => nodeMatches(n, search, mnaFilter, riFilter, riskFilter))
         .map((node) => (

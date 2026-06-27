@@ -1,4 +1,4 @@
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Badge } from "@/components/ui/badge";
 import {
@@ -11,6 +11,8 @@ import {
   Database,
   Clock,
   FileSpreadsheet,
+  Maximize2,
+  Minimize2,
 } from "lucide-react";
 import InfoTip from "@/components/InfoTip";
 import JiraLink from "@/components/JiraLink";
@@ -248,8 +250,23 @@ export function SourceBanner({ rows, uploadedFileName, loadedAt, inputMode, apiD
   );
 }
 
+function ExpandToggle({ expanded, onToggle }) {
+  return (
+    <button
+      onClick={onToggle}
+      className="ml-auto flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
+    >
+      {expanded ? <><Minimize2 className="h-3 w-3" /> Collapse</> : <><Maximize2 className="h-3 w-3" /> Show All</>}
+    </button>
+  );
+}
+
 export function ExecutivePortfolio({ rows, onNavigate }) {
   const snapshots = useMemo(() => computeInitiativeSnapshots(rows), [rows]);
+  const [expandHealth, setExpandHealth] = useState(false);
+  const [expandRemaining, setExpandRemaining] = useState(false);
+  const [expandBlockers, setExpandBlockers] = useState(false);
+  const [expandBlockerDep, setExpandBlockerDep] = useState(false);
 
   const totals = useMemo(() => {
     if (!snapshots.length) {
@@ -322,8 +339,9 @@ export function ExecutivePortfolio({ rows, onNavigate }) {
             <InfoTip title="One row per Initiative" side="right">
               The executive single-pane-of-glass: each Initiative with its rollup completion, what's still open at every level, blockers, dependencies, gaps, and a Green / Yellow / Red health verdict. Sorted by lowest completion first so risk floats to the top.
             </InfoTip>
+            <ExpandToggle expanded={expandHealth} onToggle={() => setExpandHealth((x) => !x)} />
           </div>
-          <div className="max-h-[480px] overflow-auto rounded-2xl border border-slate-200">
+          <div className={`${expandHealth ? "" : "max-h-[480px]"} overflow-auto rounded-2xl border border-slate-200`}>
             <table className="w-full border-collapse text-sm">
               <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                 <tr>
@@ -388,8 +406,9 @@ export function ExecutivePortfolio({ rows, onNavigate }) {
               <InfoTip title='Answers: "What is left?"' side="right">
                 Counts of currently <b>open</b> work items per Initiative — distinct epics, stories, tasks, sub-tasks and linked issues whose status is not Done / Closed / Resolved / Cancelled.
               </InfoTip>
+              <ExpandToggle expanded={expandRemaining} onToggle={() => setExpandRemaining((x) => !x)} />
             </div>
-            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
+            <div className={`${expandRemaining ? "" : "max-h-[360px]"} overflow-auto rounded-xl border border-slate-200`}>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
@@ -428,8 +447,9 @@ export function ExecutivePortfolio({ rows, onNavigate }) {
                 <br />
                 <b>Dependencies</b> = active linked issues with link types like 'relates to', 'implements', 'is implemented by', 'depends on'. They indicate cross-team coupling.
               </InfoTip>
+              <ExpandToggle expanded={expandBlockers} onToggle={() => setExpandBlockers((x) => !x)} />
             </div>
-            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
+            <div className={`${expandBlockers ? "" : "max-h-[360px]"} overflow-auto rounded-xl border border-slate-200`}>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
@@ -470,6 +490,7 @@ export function ExecutivePortfolio({ rows, onNavigate }) {
             <InfoTip title="Active blockers" side="right">
               Every active linked issue with link_type matching 'block' across the portfolio. Use this to action what's actually holding RIs.
             </InfoTip>
+            <ExpandToggle expanded={expandBlockerDep} onToggle={() => setExpandBlockerDep((x) => !x)} />
           </div>
           <BlockerDepTable
             rows={snapshots.flatMap((s) =>
@@ -477,6 +498,7 @@ export function ExecutivePortfolio({ rows, onNavigate }) {
             )}
             empty="No active blockers — nice."
             onNavigate={onNavigate}
+            expanded={expandBlockerDep}
           />
         </CardContent>
       </Card>
@@ -484,12 +506,12 @@ export function ExecutivePortfolio({ rows, onNavigate }) {
   );
 }
 
-function BlockerDepTable({ rows, empty, onNavigate }) {
+function BlockerDepTable({ rows, empty, onNavigate, expanded }) {
   if (!rows.length) {
     return <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">{empty}</div>;
   }
   return (
-    <div className="max-h-[420px] overflow-auto rounded-xl border border-slate-200">
+    <div className={`${expanded ? "" : "max-h-[420px]"} overflow-auto rounded-xl border border-slate-200`}>
       <table className="w-full text-sm">
         <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
           <tr>
@@ -640,6 +662,9 @@ function computeDataQuality(rows) {
 
 export function DataQuality({ rows, onNavigate }) {
   const dq = useMemo(() => computeDataQuality(rows), [rows]);
+  const [expandMismatch, setExpandMismatch] = useState(false);
+  const [expandCross, setExpandCross] = useState(false);
+  const [expandOrphan, setExpandOrphan] = useState(false);
 
   const totalIssues =
     dq.parentClosedChildActive.length +
@@ -697,8 +722,9 @@ export function DataQuality({ rows, onNavigate }) {
               <InfoTip title="What this flags" side="right">
                 The parent RI / Epic / Story is in a complete status (Done / Closed / Resolved / Cancelled) while a child below it is still active. Either the parent was closed prematurely or the child needs to be re-statused.
               </InfoTip>
+              <ExpandToggle expanded={expandMismatch} onToggle={() => setExpandMismatch((x) => !x)} />
             </div>
-            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
+            <div className={`${expandMismatch ? "" : "max-h-[360px]"} overflow-auto rounded-xl border border-slate-200`}>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
@@ -738,8 +764,9 @@ export function DataQuality({ rows, onNavigate }) {
               <InfoTip title="Shared dependency or bug?" side="right">
                 A linked Jira key that appears in two or more Initiatives. The completion rollup de-duplicates this so it doesn't get counted twice, but it's worth confirming the mapping is intentional.
               </InfoTip>
+              <ExpandToggle expanded={expandCross} onToggle={() => setExpandCross((x) => !x)} />
             </div>
-            <div className="max-h-[320px] overflow-auto rounded-xl border border-slate-200">
+            <div className={`${expandCross ? "" : "max-h-[320px]"} overflow-auto rounded-xl border border-slate-200`}>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
@@ -774,8 +801,9 @@ export function DataQuality({ rows, onNavigate }) {
               <InfoTip title="Rows without a home" side="right">
                 Rows missing a <code>roadmap_key</code> / <code>parent_key</code>. They are dropped from all rollups, charts and the hierarchy tree. Fix at the source CSV by populating the RI key.
               </InfoTip>
+              <ExpandToggle expanded={expandOrphan} onToggle={() => setExpandOrphan((x) => !x)} />
             </div>
-            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
+            <div className={`${expandOrphan ? "" : "max-h-[360px]"} overflow-auto rounded-xl border border-slate-200`}>
               <table className="w-full text-sm">
                 <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
