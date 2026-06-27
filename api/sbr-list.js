@@ -48,6 +48,10 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ error: "GET only" });
   }
 
+  if (!JIRA_EMAIL || !JIRA_API_TOKEN) {
+    return res.status(503).json({ error: "SBR list unavailable: Jira credentials not configured" });
+  }
+
   const forceRefresh = req.query?.refresh === "true";
   const now = Date.now();
 

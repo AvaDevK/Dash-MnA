@@ -335,7 +335,7 @@ export default function MnaRiLinkedIssueDashboard() {
   const fileInputRef = useRef(null);
   const [sbrKey, setSbrKey] = useState("SBR-356");
   const [sbrInput, setSbrInput] = useState("SBR-356");
-  const [jiraJql, setJiraJql] = useState(`parent = SBR-356 ORDER BY key ASC`);
+  const [jiraJql, setJiraJql] = useState(`SBR-356`);
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraError, setJiraError] = useState("");
   const [jiraLastPulled, setJiraLastPulled] = useState(0);
@@ -771,7 +771,7 @@ export default function MnaRiLinkedIssueDashboard() {
       const resp = await fetch("/api/jira-export", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ jql: jiraJql }),
+        body: JSON.stringify({ sbr: jiraJql.trim() }),
       });
       if (!resp.ok) {
         let msg = `HTTP ${resp.status}`;
@@ -786,10 +786,10 @@ export default function MnaRiLinkedIssueDashboard() {
       const text = await resp.text();
       const lines = text.split(/\r?\n/).filter(Boolean);
       if (lines.length <= 1) {
-        throw new Error("Jira returned 0 issues for that JQL.");
+        throw new Error("Jira returned 0 issues for that SBR.");
       }
       setCsvText(text);
-      setUploadedFileName(`Jira live: ${jiraJql.slice(0, 60)}${jiraJql.length > 60 ? "…" : ""}`);
+      setUploadedFileName(`Jira live: ${jiraJql} full hierarchy`);
       setUploadError("");
       setLoadedAt(Date.now());
       setJiraLastPulled(Date.now());
@@ -839,7 +839,7 @@ export default function MnaRiLinkedIssueDashboard() {
                 onChange={(val) => {
                   setSbrKey(val);
                   setSbrInput(val);
-                  setJiraJql(`parent = ${val} ORDER BY key ASC`);
+                  setJiraJql(val);
                 }}
                 onLoad={(val) => {
                   if (inputMode === "api") pullFromApi(true, val);
@@ -993,16 +993,16 @@ export default function MnaRiLinkedIssueDashboard() {
               <div className="space-y-3">
                 <div className="flex flex-wrap items-center gap-2">
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                    JQL
+                    SBR Key
                   </label>
-                  <InfoTip title="Live Jira Fetch" side="right">
-                    Hits <code>/api/jira-export</code> (server-side, basic-auth via Vercel env vars). The function runs your JQL against Avalara Jira and returns CSV in this dashboard's schema. Each issue produces one row per linked issue (or a single <code>NO LINKS</code> row).
+                  <InfoTip title="Live Jira Hierarchy Fetch" side="right">
+                    Hits <code>/api/jira-export</code> with the selected SBR key. Walks the full 5-level hierarchy — SBR → Initiatives → Roadmap Items → Epics → Stories/Tasks → Sub-tasks — and returns CSV in the dashboard schema with all parent context columns filled in.
                   </InfoTip>
                 </div>
                 <Input
                   value={jiraJql}
-                  onChange={(e) => setJiraJql(e.target.value)}
-                  placeholder='e.g. issuekey = SBR-356 OR parent = SBR-356'
+                  onChange={(e) => setJiraJql(e.target.value.trim().toUpperCase())}
+                  placeholder='e.g. SBR-356'
                   className="font-mono text-xs"
                 />
                 <div className="flex flex-wrap items-center gap-2">
@@ -1507,8 +1507,9 @@ export default function MnaRiLinkedIssueDashboard() {
               />
             ) : (
               <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
+                <div className="max-h-[540px] overflow-auto">
                 <table className="w-full border-collapse text-sm">
-                  <thead style={{ background: AV.navy }}>
+                  <thead style={{ background: AV.navy }} className="sticky top-0 z-10">
                     <tr>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Initiative / Roadmap Item</th>
                       <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Status</th>
@@ -1535,6 +1536,7 @@ export default function MnaRiLinkedIssueDashboard() {
                     })}
                   </tbody>
                 </table>
+                </div>
               </div>
             )}
           </CardContent>
@@ -1553,14 +1555,20 @@ export default function MnaRiLinkedIssueDashboard() {
 
 function InitiativeCard({ g }) {
   const tone = completionTone(g.completion);
+  const eol = g.isEndOfLife;
+  const barColor = eol ? "#9CA3AF" : tone.bar;
+  const borderLeftColor = eol ? "#C00000" : tone.bar;
+  const cardStyle = eol
+    ? { borderLeft: `4px solid #C00000`, borderColor: "#C00000", background: "#F9FAFB" }
+    : { borderLeft: `4px solid ${borderLeftColor}` };
   return (
     <div
-      className="relative rounded-xl border bg-white p-4 shadow-sm overflow-hidden"
-      style={{ borderLeft: `4px solid ${tone.bar}` }}
+      className={`relative rounded-xl border p-4 shadow-sm overflow-hidden ${eol ? "border-red-700" : "bg-white"}`}
+      style={cardStyle}
     >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
-          <div className="text-sm font-bold text-slate-900">{g.name}</div>
+          <div className={`text-sm font-bold ${eol ? "text-slate-500" : "text-slate-900"}`}>{g.name}</div>
           <div className="text-[11px] text-slate-400 mt-0.5">
             {g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}
           </div>
@@ -1569,18 +1577,23 @@ function InitiativeCard({ g }) {
           Completion is the avg of this Initiative's {g.riCount} RI{g.riCount === 1 ? "" : "s"}. Done/Closed/Resolved count as complete.
         </InfoTip>
       </div>
+      {eol && (
+        <div className="mb-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#FEE2E2", color: "#C00000" }}>
+          ⊘ {g.lifecycleLabel || "End of Life / Retired"}
+        </div>
+      )}
       <div className="flex items-baseline gap-1.5">
-        <span className={`text-3xl font-bold ${tone.text}`}>{g.completion}%</span>
+        <span className={`text-3xl font-bold ${eol ? "text-slate-400" : tone.text}`}>{g.completion}%</span>
         <span className="text-xs text-slate-400">complete</span>
       </div>
-      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
         <div
           className="h-full rounded-full transition-all"
-          style={{ width: `${g.completion}%`, background: tone.bar }}
+          style={{ width: `${g.completion}%`, background: barColor }}
         />
       </div>
       <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-        <span>Pending: <b className="text-slate-700">{g.pending}%</b></span>
+        <span>Pending: <b className={eol ? "text-slate-400" : "text-slate-700"}>{g.pending}%</b></span>
         <span>{g.linkedIssues} linked · {g.zeroLinkRis} gaps</span>
       </div>
     </div>
@@ -1765,7 +1778,7 @@ function HierarchyView({
   rows,
 }) {
   return (
-    <div className="mt-4 rounded-2xl border border-slate-200 bg-white p-3">
+    <div className="mt-4 max-h-[640px] overflow-y-auto rounded-2xl border border-slate-200 bg-white p-3">
       {hierarchy
         .filter((n) => nodeMatches(n, search, mnaFilter, riFilter, riskFilter))
         .map((node) => (

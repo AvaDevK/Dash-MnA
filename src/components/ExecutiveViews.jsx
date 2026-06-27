@@ -323,9 +323,9 @@ export function ExecutivePortfolio({ rows }) {
               The executive single-pane-of-glass: each Initiative with its rollup completion, what's still open at every level, blockers, dependencies, gaps, and a Green / Yellow / Red health verdict. Sorted by lowest completion first so risk floats to the top.
             </InfoTip>
           </div>
-          <div className="overflow-x-auto rounded-2xl border border-slate-200">
+          <div className="max-h-[480px] overflow-auto rounded-2xl border border-slate-200">
             <table className="w-full border-collapse text-sm">
-              <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+              <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                 <tr>
                   <th className="p-3">Initiative</th>
                   <th className="p-3">Health</th>
@@ -389,9 +389,9 @@ export function ExecutivePortfolio({ rows }) {
                 Counts of currently <b>open</b> work items per Initiative — distinct epics, stories, tasks, sub-tasks and linked issues whose status is not Done / Closed / Resolved / Cancelled.
               </InfoTip>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="p-2">Initiative</th>
                     <th className="p-2">Epics</th>
@@ -429,9 +429,9 @@ export function ExecutivePortfolio({ rows }) {
                 <b>Dependencies</b> = active linked issues with link types like 'relates to', 'implements', 'is implemented by', 'depends on'. They indicate cross-team coupling.
               </InfoTip>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="p-2">Initiative</th>
                     <th className="p-2">Blockers</th>
@@ -488,9 +488,9 @@ function BlockerDepTable({ rows, empty }) {
     return <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">{empty}</div>;
   }
   return (
-    <div className="overflow-x-auto rounded-xl border border-slate-200">
+    <div className="max-h-[420px] overflow-auto rounded-xl border border-slate-200">
       <table className="w-full text-sm">
-        <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+        <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
           <tr>
             <th className="p-2">Initiative</th>
             <th className="p-2">RI</th>
@@ -697,9 +697,9 @@ export function DataQuality({ rows }) {
                 The parent RI / Epic / Story is in a complete status (Done / Closed / Resolved / Cancelled) while a child below it is still active. Either the parent was closed prematurely or the child needs to be re-statused.
               </InfoTip>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="p-2">Parent (RI)</th>
                     <th className="p-2">Parent Status</th>
@@ -738,9 +738,9 @@ export function DataQuality({ rows }) {
                 A linked Jira key that appears in two or more Initiatives. The completion rollup de-duplicates this so it doesn't get counted twice, but it's worth confirming the mapping is intentional.
               </InfoTip>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="max-h-[320px] overflow-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="p-2">Linked Key</th>
                     <th className="p-2">Appears under Initiatives</th>
@@ -774,9 +774,9 @@ export function DataQuality({ rows }) {
                 Rows missing a <code>roadmap_key</code> / <code>parent_key</code>. They are dropped from all rollups, charts and the hierarchy tree. Fix at the source CSV by populating the RI key.
               </InfoTip>
             </div>
-            <div className="overflow-x-auto rounded-xl border border-slate-200">
+            <div className="max-h-[360px] overflow-auto rounded-xl border border-slate-200">
               <table className="w-full text-sm">
-                <thead className="bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
+                <thead className="sticky top-0 z-10 bg-slate-100 text-left text-[11px] uppercase tracking-wide text-slate-600">
                   <tr>
                     <th className="p-2">CSV Row #</th>
                     <th className="p-2">Type</th>

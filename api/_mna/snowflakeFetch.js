@@ -9,7 +9,7 @@ const ISSUES_TABLE = `${env.snowflakeDatabase}.${env.snowflakeSchema}.ISSUES`;
 // Pre-materialized Dynamic Table — dedicated DASH_MNA schema in ENGOPERATIONS_PROD_MART.
 // Segregated from V2's PUBLIC schema. Refreshes every 15 min via Snowflake scheduler.
 // Created by: scripts/create-dynamic-table.sql
-const DYNAMIC_TABLE = `ENGOPERATIONS_PROD_MART.PUBLIC.DASH_MNA_SBR_HIERARCHY_CACHE`;
+const DYNAMIC_TABLE = `ENGOPERATIONS_PROD_MART.DASH_MNA.SBR_HIERARCHY_CACHE`;
 
 const PARENT_WALK_MAX_DEPTH = 5;
 const LINK_EXPANSION_MAX_BATCHES = 5;
@@ -198,7 +198,14 @@ async function fetchFromRoadmapTree(sbr) {
 // Instead of 8-13 serial round-trips, one query resolves the full hierarchy in Snowflake.
 // For SBR-356: uses MNAC project filter (same as V2).
 // For any SBR:  uses parent-key JOIN pattern (same as the dynamic table DDL).
+function sanitizeSbrKey(sbr) {
+  // Allow only SBR-NNN format to prevent SQL injection
+  if (!/^[A-Z]+-[0-9]+$/.test(sbr)) throw new Error(`Invalid SBR key: ${sbr}`);
+  return sbr;
+}
+
 async function fetchAllInOneQuery(sbr) {
+  sbr = sanitizeSbrKey(sbr);
   const T = ISSUES_TABLE;
   let sql;
 
@@ -390,9 +397,9 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
       const allIssues = await fetchFromDynamicTable(sbr);
       if (allIssues.length > 0) {
         console.log(`[snowflake] Dynamic Table hit: ${allIssues.length} issues for ${sbr}`);
-        // Dynamic table already contains the full hierarchy — no walk/expansion needed
-        // Treat all issues as parentsRaw so normalizeIssues builds edges from them
-        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
+        const seenKeys = new Set(allIssues.map((i) => i.key).filter(Boolean));
+        const expandedRaw = await fetchLinkExpansion([allIssues], seenKeys);
+        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw };
       }
       // Table exists but no rows for this SBR — fall through to live query
       console.warn(`[snowflake] Dynamic Table has 0 rows for ${sbr}, falling back to live query`);
@@ -402,26 +409,16 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
     }
   }
 
-  // Fast path B: ROADMAP_2026_TREE seed — uses existing V2 table to get SBR→Init→RI keys
-  if (await isRoadmapTreeAvailable()) {
-    try {
-      const allIssues = await fetchFromRoadmapTree(sbr);
-      if (allIssues && allIssues.length > 0) {
-        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
-      }
-    } catch (treeErr) {
-      _roadmapTreeAvailable = false;
-      console.warn(`[snowflake] ROADMAP_2026_TREE seed failed: ${treeErr.message}`);
-    }
-  }
-
   // Fast path C: single CTE query — resolves full hierarchy server-side in one round-trip.
   // Eliminates 8-13 serial queries (each with Snowflake connection overhead).
   // Falls back to 4-layer scan only if this fails.
   try {
     const allIssues = await fetchAllInOneQuery(sbr);
     if (allIssues.length > 0) {
-      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
+      const seenKeys = new Set(allIssues.map((i) => i.key).filter(Boolean));
+      const expandedRaw = await fetchLinkExpansion([allIssues], seenKeys);
+      console.log(`[snowflake] CTE: ${allIssues.length} hierarchy + ${expandedRaw.length} linked issues for ${sbr}`);
+      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw };
     }
   } catch (cteErr) {
     console.warn(`[snowflake] single-query CTE failed: ${cteErr.message}, falling back to 4-layer scan`);
