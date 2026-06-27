@@ -31,7 +31,10 @@ export default function SbrPicker({ value, onChange, onLoad }) {
     }
   }, []);
 
-  // Load on first open
+  // Prefetch SBR list immediately on mount — ready before the user even opens the dropdown
+  useEffect(() => { loadSbrs(); }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Re-fetch if somehow not yet fetched when opened
   useEffect(() => {
     if (open && !fetched) loadSbrs();
   }, [open, fetched, loadSbrs]);
@@ -138,6 +141,12 @@ export default function SbrPicker({ value, onChange, onLoad }) {
                 <button
                   type="button"
                   onClick={() => select(sbr)}
+                  onMouseEnter={() => {
+                    // Fire-and-forget prefetch to warm the Vercel container cache
+                    if (sbr.key !== value) {
+                      fetch(`/api/mna?sbr=${sbr.key}`, { priority: "low" }).catch(() => {});
+                    }
+                  }}
                   className={`w-full text-left px-4 py-2.5 hover:bg-orange-50 flex items-start gap-3 transition ${
                     sbr.key === value ? "bg-orange-50" : ""
                   }`}

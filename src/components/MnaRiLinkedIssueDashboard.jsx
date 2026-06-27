@@ -850,6 +850,29 @@ export default function MnaRiLinkedIssueDashboard() {
 
   return (
     <div className="min-h-screen bg-gray-50 p-6 text-slate-900">
+      {/* Top loading bar — shown whenever API is fetching */}
+      {apiLoading && (
+        <div className="fixed inset-x-0 top-0 z-[60] h-1 overflow-hidden" style={{ background: "#e2e8f0" }}>
+          <div
+            className="h-full animate-pulse"
+            style={{
+              background: `linear-gradient(90deg, ${AV.navy}, ${AV.orange}, ${AV.navy})`,
+              backgroundSize: "200% 100%",
+              animation: "sbr-loading-bar 1.6s linear infinite",
+            }}
+          />
+        </div>
+      )}
+      {/* Floating SBR-switch banner */}
+      {apiLoading && apiData && (
+        <div
+          className="fixed top-4 left-1/2 z-50 -translate-x-1/2 flex items-center gap-3 rounded-full px-5 py-2.5 text-sm font-semibold text-white shadow-xl"
+          style={{ background: AV.navy }}
+        >
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Loading {sbrKey}… Querying Snowflake
+        </div>
+      )}
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
@@ -884,7 +907,7 @@ export default function MnaRiLinkedIssueDashboard() {
                   setJiraJql(val);
                 }}
                 onLoad={(val) => {
-                  if (inputMode === "api") pullFromApi(true, val);
+                  if (inputMode === "api") pullFromApi(false, val);
                 }}
               />
             </div>

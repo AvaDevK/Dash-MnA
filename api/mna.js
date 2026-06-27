@@ -30,7 +30,7 @@
 const { env } = require("./_mna/config");
 const { normalizeIssues } = require("./_mna/normalize");
 const { fetchAllMnacIssuesFromJira, hasJiraCredentials } = require("./_mna/jiraFetch");
-const { fetchAllMnacIssuesFromSnowflake, probeMnacIssueCount } = require("./_mna/snowflakeFetch");
+const { fetchAllMnacIssuesFromSnowflake } = require("./_mna/snowflakeFetch");
 const { hasSnowflakeCredentials } = require("./_mna/snowflakeClient");
 const { enrichWithLeanIx, applyBusinessLifecycleFallback } = require("./_mna/leanixFetch");
 const {
@@ -145,32 +145,30 @@ async function buildUniverse(sbr = "SBR-356") {
   let repoHealth;
 
   if (source === "snowflake") {
-    const health = await snowflakeHealthCheck(sbr);
-    if (!health.ok) throw new Error(`Snowflake unavailable: ${health.reason}`);
-    layers = await fetchAllMnacIssuesFromSnowflake(sbr);
+    if (!hasSnowflakeCredentials()) throw new Error("Snowflake credentials not configured");
+    layers = await withTimeout(fetchAllMnacIssuesFromSnowflake(sbr), 90_000, "Snowflake MNAC fetch");
     repoHealth = { ok: true, sourceLabel: `snowflake · ${sbr}`, lastFetchedAt: new Date().toISOString() };
   } else if (source === "jira") {
     if (!hasJiraCredentials()) throw new Error("JIRA_EMAIL or JIRA_API_TOKEN is not set");
     layers = await fetchAllMnacIssuesFromJira(sbr);
     repoHealth = { ok: true, sourceLabel: `jira · ${sbr}`, lastFetchedAt: new Date().toISOString() };
   } else {
-    // auto: Snowflake first, Jira fallback
-    const snowHealth = await snowflakeHealthCheck(sbr);
-    if (snowHealth.ok) {
+    // auto: try Snowflake directly (no probe round-trip), fall back to Jira on any error
+    if (hasSnowflakeCredentials()) {
       try {
         layers = await withTimeout(fetchAllMnacIssuesFromSnowflake(sbr), 90_000, "Snowflake MNAC fetch");
         repoHealth = { ok: true, sourceLabel: `snowflake · ${sbr}`, lastFetchedAt: new Date().toISOString() };
       } catch (snowErr) {
         const reason = snowErr instanceof Error ? snowErr.message : String(snowErr);
-        console.warn(`[mna] Snowflake unavailable — falling back to Jira: ${reason}`);
+        console.warn(`[mna] Snowflake failed — falling back to Jira: ${reason}`);
         if (!hasJiraCredentials()) throw new Error(`Snowflake: ${reason}; Jira fallback: credentials missing`);
         layers = await fetchAllMnacIssuesFromJira(sbr);
         repoHealth = { ok: true, sourceLabel: `jira (snowflake fallback) · ${sbr}`, reason, lastFetchedAt: new Date().toISOString() };
       }
     } else {
-      if (!hasJiraCredentials()) throw new Error(`Snowflake: ${snowHealth.reason}; Jira fallback: credentials missing`);
+      if (!hasJiraCredentials()) throw new Error("No data source configured: set Snowflake or Jira credentials");
       layers = await fetchAllMnacIssuesFromJira(sbr);
-      repoHealth = { ok: true, sourceLabel: `jira (snowflake unavailable) · ${sbr}`, reason: snowHealth.reason, lastFetchedAt: new Date().toISOString() };
+      repoHealth = { ok: true, sourceLabel: `jira · ${sbr}`, lastFetchedAt: new Date().toISOString() };
     }
   }
 
@@ -202,18 +200,6 @@ async function buildUniverse(sbr = "SBR-356") {
   };
 }
 
-async function snowflakeHealthCheck(sbr = "SBR-356") {
-  if (!hasSnowflakeCredentials()) {
-    return { ok: false, sourceLabel: "snowflake", reason: "Snowflake credentials not configured" };
-  }
-  try {
-    const count = await probeMnacIssueCount(sbr);
-    if (count <= 0) return { ok: false, sourceLabel: "snowflake", reason: `No issues found in Snowflake for ${sbr}` };
-    return { ok: true, sourceLabel: "snowflake" };
-  } catch (err) {
-    return { ok: false, sourceLabel: "snowflake", reason: err instanceof Error ? err.message : String(err) };
-  }
-}
 
 function withTimeout(promise, ms, label) {
   return Promise.race([
