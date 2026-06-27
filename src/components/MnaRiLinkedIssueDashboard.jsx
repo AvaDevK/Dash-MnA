@@ -1250,9 +1250,9 @@ export default function MnaRiLinkedIssueDashboard() {
                 <TrendingUp className="h-3.5 w-3.5" /> {isApiMode ? `Rollup from ${apiData?.repoHealth?.sourceLabel ?? "API"}` : "Rollup from Jira status"}
               </div>
             </div>
-            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4">
               {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).map((g) => (
-                <InitiativeCard key={g.key} g={g} />
+                <InitiativeCard key={g.key} g={g} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />
               ))}
               {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).length === 0 && (
                 <div className="col-span-full rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
@@ -1284,6 +1284,8 @@ export default function MnaRiLinkedIssueDashboard() {
                   <BarChart
                     data={isApiMode ? apiMnaChart : mnaChart}
                     margin={{ top: 8, right: 12, left: 0, bottom: 48 }}
+                    style={{ cursor: "pointer" }}
+                    onClick={(data) => { if (data?.activePayload?.[0]?.payload?.name) { setActiveTab("overview"); setViewMode("hierarchy"); setSelectedMnas(new Set([data.activePayload[0].payload.name])); } }}
                   >
                     <XAxis
                       dataKey="name"
@@ -1562,8 +1564,8 @@ export default function MnaRiLinkedIssueDashboard() {
         </Card>
         </>)}
 
-        {activeTab === "executive" && <ExecutivePortfolio rows={effectiveRows} />}
-        {activeTab === "quality" && <DataQuality rows={effectiveRows} />}
+        {activeTab === "executive" && <ExecutivePortfolio rows={effectiveRows} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />}
+        {activeTab === "quality" && <DataQuality rows={effectiveRows} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />}
         {activeTab === "live" && <GleanAgent />}
 
         <SourceBanner rows={effectiveRows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} inputMode={inputMode} apiData={apiData} sbrKey={sbrKey} />
@@ -1572,58 +1574,55 @@ export default function MnaRiLinkedIssueDashboard() {
   );
 }
 
-function InitiativeCard({ g }) {
+function InitiativeCard({ g, onNavigate }) {
   const tone = completionTone(g.completion);
   const eol = g.isEndOfLife;
   const ringColor = eol ? "#9CA3AF" : tone.bar;
-  const circumference = 125.7;
+  const circumference = 100.5; // r=16
   const filled = (g.completion / 100) * circumference;
 
   return (
     <div
-      className={`relative flex flex-col gap-3 rounded-2xl border p-4 shadow-sm transition-shadow hover:shadow-md ${eol ? "border-red-600 bg-red-50/40" : "border-slate-200 bg-white"}`}
+      role="button"
+      tabIndex={0}
+      onClick={() => onNavigate?.(g.name)}
+      onKeyDown={(e) => e.key === "Enter" && onNavigate?.(g.name)}
+      className={`group relative flex flex-col gap-2 rounded-xl border p-3 shadow-sm transition-all cursor-pointer hover:shadow-md hover:-translate-y-0.5 ${eol ? "border-red-600 bg-red-50/40" : "border-slate-200 bg-white"}`}
       style={eol ? {} : { borderLeft: `4px solid ${tone.bar}` }}
+      title="Click to view in hierarchy"
     >
-      {/* Header: name + donut ring */}
-      <div className="flex items-start justify-between gap-3">
+      {/* Header: name + mini donut */}
+      <div className="flex items-start justify-between gap-2">
         <div className="min-w-0 flex-1">
           {eol && (
-            <span className="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#FEE2E2", color: "#C00000" }}>
-              ⊘ {g.lifecycleLabel || "End of Life / Retired"}
+            <span className="mb-1 inline-flex items-center gap-0.5 rounded px-1 py-0.5 text-[9px] font-bold uppercase tracking-wide" style={{ background: "#FEE2E2", color: "#C00000" }}>
+              ⊘ {g.lifecycleLabel || "End of Life"}
             </span>
           )}
-          <div className={`text-sm font-bold leading-snug ${eol ? "text-slate-400" : "text-slate-900"}`}>{g.name}</div>
-          <div className="mt-0.5 text-[11px] text-slate-400">{g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}</div>
+          <div className={`text-[13px] font-bold leading-tight ${eol ? "text-slate-400" : "text-slate-900 group-hover:text-blue-700"}`}>{g.name}</div>
+          <div className="mt-0.5 text-[10px] text-slate-400">{g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}</div>
         </div>
-        {/* Donut ring */}
-        <svg width="52" height="52" viewBox="0 0 48 48" className="flex-shrink-0">
-          <circle cx="24" cy="24" r="20" fill="none" stroke="#E2E8F0" strokeWidth="4" />
-          <circle
-            cx="24" cy="24" r="20" fill="none"
-            stroke={ringColor}
-            strokeWidth="4"
-            strokeDasharray={`${filled} ${circumference}`}
-            strokeLinecap="round"
-            transform="rotate(-90 24 24)"
-          />
-          <text x="24" y="27" textAnchor="middle" fontSize="10" fontWeight="bold" fill={eol ? "#9CA3AF" : tone.bar}>{g.completion}%</text>
+        {/* Mini donut ring */}
+        <svg width="40" height="40" viewBox="0 0 36 36" className="flex-shrink-0">
+          <circle cx="18" cy="18" r="16" fill="none" stroke="#E2E8F0" strokeWidth="3.5" />
+          <circle cx="18" cy="18" r="16" fill="none" stroke={ringColor} strokeWidth="3.5"
+            strokeDasharray={`${filled} ${circumference}`} strokeLinecap="round" transform="rotate(-90 18 18)" />
+          <text x="18" y="22" textAnchor="middle" fontSize="8.5" fontWeight="bold" fill={eol ? "#9CA3AF" : tone.bar}>{g.completion}%</text>
         </svg>
       </div>
 
       {/* Progress bar */}
-      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className="h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
         <div className="h-full rounded-full transition-all" style={{ width: `${g.completion}%`, background: ringColor }} />
       </div>
 
       {/* Stats row */}
-      <div className="flex items-center justify-between text-[11px] text-slate-500">
-        <span className="flex items-center gap-1">
-          <span className="font-semibold text-slate-700">{g.pending}%</span> pending
-        </span>
-        <span className="flex items-center gap-2">
-          <span title="Linked issues">{g.linkedIssues} linked</span>
+      <div className="flex items-center justify-between text-[10px] text-slate-500">
+        <span><span className="font-semibold text-slate-600">{g.pending}%</span> pending</span>
+        <span className="flex items-center gap-1.5">
+          <span>{g.linkedIssues} linked</span>
           {g.zeroLinkRis > 0 && (
-            <span className="rounded px-1 py-0.5 text-[10px] font-semibold" style={{ background: "#FEF3C7", color: "#92400E" }}>
+            <span className="rounded px-1 py-0.5 font-semibold" style={{ background: "#FEF3C7", color: "#92400E" }}>
               {g.zeroLinkRis} gap{g.zeroLinkRis === 1 ? "" : "s"}
             </span>
           )}

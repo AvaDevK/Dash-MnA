@@ -248,7 +248,7 @@ export function SourceBanner({ rows, uploadedFileName, loadedAt, inputMode, apiD
   );
 }
 
-export function ExecutivePortfolio({ rows }) {
+export function ExecutivePortfolio({ rows, onNavigate }) {
   const snapshots = useMemo(() => computeInitiativeSnapshots(rows), [rows]);
 
   const totals = useMemo(() => {
@@ -340,9 +340,9 @@ export function ExecutivePortfolio({ rows }) {
               </thead>
               <tbody>
                 {snapshots.map((s) => (
-                  <tr key={s.key} className="border-t border-slate-100 align-top hover:bg-slate-50">
+                  <tr key={s.key} className="border-t border-slate-100 align-top hover:bg-blue-50 cursor-pointer" onClick={() => onNavigate?.(s.name)}>
                     <td className="p-3">
-                      <div className="font-semibold text-slate-900">{s.name}</div>
+                      <div className="font-semibold text-slate-900 group-hover:text-blue-700">{s.name}</div>
                       <div className="text-[11px] uppercase tracking-wide text-slate-500">
                         <JiraLink jKey={s.key} />
                       </div>
@@ -403,8 +403,8 @@ export function ExecutivePortfolio({ rows }) {
                 </thead>
                 <tbody>
                   {snapshots.map((s) => (
-                    <tr key={s.key} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="p-2 font-semibold">{s.name}</td>
+                    <tr key={s.key} className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer" onClick={() => onNavigate?.(s.name)}>
+                      <td className="p-2 font-semibold text-slate-900">{s.name}</td>
                       <td className="p-2">{s.openEpics}</td>
                       <td className="p-2">{s.openStories}</td>
                       <td className="p-2">{s.openTasks}</td>
@@ -441,8 +441,8 @@ export function ExecutivePortfolio({ rows }) {
                 </thead>
                 <tbody>
                   {snapshots.map((s) => (
-                    <tr key={s.key} className="border-t border-slate-100 hover:bg-slate-50">
-                      <td className="p-2 font-semibold">{s.name}</td>
+                    <tr key={s.key} className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer" onClick={() => onNavigate?.(s.name)}>
+                      <td className="p-2 font-semibold text-slate-900">{s.name}</td>
                       <td className="p-2">
                         <ScoreBadge value={s.blockers} tone={s.blockers > 0 ? "rose" : "slate"} />
                       </td>
@@ -476,6 +476,7 @@ export function ExecutivePortfolio({ rows }) {
               s.blockerRows.map((b) => ({ ...b, initiative: s.name })),
             )}
             empty="No active blockers — nice."
+            onNavigate={onNavigate}
           />
         </CardContent>
       </Card>
@@ -483,7 +484,7 @@ export function ExecutivePortfolio({ rows }) {
   );
 }
 
-function BlockerDepTable({ rows, empty }) {
+function BlockerDepTable({ rows, empty, onNavigate }) {
   if (!rows.length) {
     return <div className="rounded-xl border border-dashed border-slate-200 p-4 text-center text-sm text-slate-500">{empty}</div>;
   }
@@ -501,8 +502,8 @@ function BlockerDepTable({ rows, empty }) {
         </thead>
         <tbody>
           {rows.map((r, i) => (
-            <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
-              <td className="p-2 font-semibold">{r.initiative}</td>
+            <tr key={i} className="border-t border-slate-100 hover:bg-blue-50">
+              <td className="p-2 font-semibold cursor-pointer text-blue-700 hover:underline" onClick={() => onNavigate?.(r.initiative)}>{r.initiative}</td>
               <td className="p-2 font-mono text-xs"><JiraLink jKey={r.parentKey} /></td>
               <td className="p-2">
                 <div className="font-mono text-xs"><JiraLink jKey={r.linkedKey} /></div>
@@ -637,7 +638,7 @@ function computeDataQuality(rows) {
   };
 }
 
-export function DataQuality({ rows }) {
+export function DataQuality({ rows, onNavigate }) {
   const dq = useMemo(() => computeDataQuality(rows), [rows]);
 
   const totalIssues =
@@ -710,7 +711,7 @@ export function DataQuality({ rows }) {
                 </thead>
                 <tbody>
                   {dq.parentClosedChildActive.map((d, i) => (
-                    <tr key={i} className="border-t border-slate-100 hover:bg-slate-50">
+                    <tr key={i} className="border-t border-slate-100 hover:bg-blue-50 cursor-pointer" onClick={() => onNavigate?.(d.initiative)}>
                       <td className="p-2">
                         <div className="font-mono text-xs"><JiraLink jKey={d.parentKey} /></div>
                         <div className="text-slate-700">{d.parentTitle}</div>
