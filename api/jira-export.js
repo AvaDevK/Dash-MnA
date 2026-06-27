@@ -107,13 +107,14 @@ function placeFields(level, base) {
   return out;
 }
 
-async function jiraSearch(baseUrl, authHeader, jql, startAt) {
-  const url = `${baseUrl}/rest/api/3/search?jql=${encodeURIComponent(jql)}&startAt=${startAt}&maxResults=${PAGE_SIZE}&fields=summary,status,issuetype,issuelinks,parent`;
+async function jiraSearch(baseUrl, authHeader, jql, nextPageToken) {
+  const url = `${baseUrl}/rest/api/3/search/jql`;
+  const body = { jql, fields: ["summary", "status", "issuetype", "issuelinks", "parent"], maxResults: PAGE_SIZE };
+  if (nextPageToken) body.nextPageToken = nextPageToken;
   const resp = await fetch(url, {
-    headers: {
-      Accept: "application/json",
-      Authorization: authHeader,
-    },
+    method: "POST",
+    headers: { Accept: "application/json", "Content-Type": "application/json", Authorization: authHeader },
+    body: JSON.stringify(body),
   });
   if (!resp.ok) {
     const text = await resp.text();
@@ -154,12 +155,10 @@ module.exports = async function handler(req, res) {
   const lines = [CSV_HEADERS.join(",")];
 
   try {
-    let startAt = 0;
+    let nextPageToken = null;
     let pages = 0;
-    let total = Infinity;
-    while (startAt < total && pages < MAX_PAGES) {
-      const data = await jiraSearch(baseUrl, authHeader, jql, startAt);
-      total = data.total ?? 0;
+    while (pages < MAX_PAGES) {
+      const data = await jiraSearch(baseUrl, authHeader, jql, nextPageToken);
       const issues = data.issues || [];
       if (issues.length === 0) break;
 
@@ -204,7 +203,8 @@ module.exports = async function handler(req, res) {
           );
         }
       }
-      startAt += issues.length;
+      if (data.isLast || !data.nextPageToken) break;
+      nextPageToken = data.nextPageToken;
       pages += 1;
     }
   } catch (err) {

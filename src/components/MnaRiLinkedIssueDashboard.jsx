@@ -1,4 +1,4 @@
-import React, { useMemo, useRef, useState } from "react";
+import React, { useMemo, useRef, useState, useEffect } from "react";
 import { Card, CardContent } from "@/components/ui/card";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -40,6 +40,7 @@ import {
   Pie,
   Cell,
   LabelList,
+  Legend,
 } from "recharts";
 import InfoTip from "@/components/InfoTip";
 import JiraLink from "@/components/JiraLink";
@@ -61,6 +62,21 @@ SBR-356,M&A Onboarding,Active,MNA-DAVO,DAVO,Active,MNAC-11,DAVO | Shared Service
 SBR-356,M&A Onboarding,Active,MNA-DAVO,DAVO,Active,MNAC-25,DAVO | AVATech Onboarding (RI2),Closed,,,,,,,,,,,,,,,NO LINKS
 SBR-356,M&A Onboarding,Active,MNA-1099,Track1099,Active,MNAC-31,Track1099 | Reliability Engineering Work (RI1),Elaboration,AVA1099-9375,1099 RI1 Execution Epic,In Progress,AVA1099-9375-1,Execution story,Done,Story,,,,,CDC-140,1099 CDC Production,Production,Task,outbound,relates to
 SBR-356,M&A Onboarding,Active,MNA-OOBJ,Oobj,Active,MNAC-53,Oobj | Reliability Engineering Work (RI1),New,RELEC-208,Oobj RELEC Active 1,Waiting for Production,,,,,,,,,,RELEC-164,Oobj RELEC Active 2,In Progress,Task,inbound,is blocked by`;
+
+// Avalara brand palette
+const AV = {
+  orange: "#F37021",
+  navy: "#1E3A5F",
+  green: "#00B050",
+  amber: "#EAB308",
+  red: "#C00000",
+  blue: "#0369A1",
+  greenLight: "#E6F6EC",
+  amberLight: "#FEF9C3",
+  redLight: "#FFEBEB",
+  blueLight: "#E0F2FE",
+  orangeLight: "#FFF4ED",
+};
 
 const HEADER_REQUIREMENT_GROUPS = [
   ["roadmap_key", "parent_key", "ri_key", "roadmap_item_key"],
@@ -171,38 +187,163 @@ function getRI(title = "") {
 
 function statusTone(status = "") {
   const s = status.toLowerCase();
-  if (["done", "closed", "resolved"].some((x) => s.includes(x)))
-    return "bg-emerald-100 text-emerald-800 border-emerald-200";
-  if (["progress", "waiting", "blocked", "production"].some((x) => s.includes(x)))
-    return "bg-amber-100 text-amber-800 border-amber-200";
-  if (
-    ["todo", "to do", "new", "elaboration", "ideation", "backlog", "open"].some(
-      (x) => s.includes(x),
-    )
-  )
-    return "bg-sky-100 text-sky-800 border-sky-200";
-  if (s.includes("cancel")) return "bg-slate-100 text-slate-700 border-slate-200";
-  return "bg-gray-100 text-gray-800 border-gray-200";
+  if (["done", "closed", "resolved", "cancelled", "canceled"].some((x) => s.includes(x)))
+    return "bg-emerald-50 text-emerald-700 border-emerald-300";
+  if (["blocked", "on hold"].some((x) => s.includes(x)))
+    return "bg-red-50 text-red-700 border-red-300";
+  if (["progress", "waiting", "production", "review", "active"].some((x) => s.includes(x)))
+    return "bg-yellow-50 text-yellow-700 border-yellow-300";
+  if (["todo", "to do", "new", "elaboration", "ideation", "backlog", "open"].some((x) => s.includes(x)))
+    return "bg-sky-50 text-sky-700 border-sky-300";
+  if (s.includes("cancel")) return "bg-slate-100 text-slate-600 border-slate-200";
+  return "bg-gray-50 text-gray-600 border-gray-200";
 }
 
 function completionTone(pct) {
-  if (pct >= 80) return { bg: "bg-emerald-500", text: "text-emerald-700" };
-  if (pct >= 50) return { bg: "bg-amber-500", text: "text-amber-700" };
-  if (pct >= 25) return { bg: "bg-orange-500", text: "text-orange-700" };
-  return { bg: "bg-rose-500", text: "text-rose-700" };
+  if (pct >= 67) return { bg: "bg-emerald-500", text: "text-emerald-700", bar: "#00B050" };
+  if (pct >= 33) return { bg: "bg-yellow-400", text: "text-yellow-700", bar: "#EAB308" };
+  return { bg: "bg-red-500", text: "text-red-700", bar: "#C00000" };
+}
+
+// ─── API-mode adapter: MnaInitiative → tree node format used by TreeNode ─────
+
+function adaptLinkedToRow(l) {
+  return {
+    linked_key: l.key,
+    linked_title: l.summary,
+    linked_status: l.statusName,
+    linked_issuetype: l.issueType,
+    link_type: l.rawLinkType || l.linkType,
+    link_direction: l.direction,
+  };
+}
+
+function adaptTreeNodeToNode(node) {
+  return {
+    id: `${node.issueType.toLowerCase().replace(/\s+/g, "-")}:${node.key}`,
+    type: node.issueType.toLowerCase().includes("sub") ? "subtask"
+      : node.issueType.toLowerCase().includes("epic") ? "epic"
+      : node.issueType.toLowerCase().includes("task") ? "task"
+      : "story",
+    key: node.key,
+    title: node.summary,
+    status: node.statusName,
+    issuetype: node.issueType,
+    completionPct: node.completionPct,
+    children: node.children.map(adaptTreeNodeToNode),
+    links: node.linked.map(adaptLinkedToRow),
+  };
+}
+
+function adaptInitiativeToNode(init) {
+  return {
+    id: `initiative:${init.key}`,
+    type: "initiative",
+    key: init.key,
+    title: init.mnaName || init.summary,
+    status: init.statusName,
+    issuetype: "Initiative",
+    completionPct: init.completionPct,
+    children: init.roadmapItems.map((ri) => ({
+      id: `roadmap:${ri.key}`,
+      type: "roadmap",
+      key: ri.key,
+      title: ri.summary,
+      status: ri.statusName,
+      issuetype: ri.issueType,
+      riBucket: ri.riBucket,
+      completionPct: ri.completionPct,
+      children: ri.children.map(adaptTreeNodeToNode),
+      links: ri.linked.map(adaptLinkedToRow),
+    })),
+    links: init.linked.map(adaptLinkedToRow),
+  };
+}
+
+function apiDataToRows(apiData) {
+  if (!apiData?.initiatives) return [];
+  const rows = [];
+  // Backend MnaTreeNode fields: key, summary, statusName, issueType, linked[], children[]
+  const walkNode = (node, init, ri, epicCtx) => {
+    const typeStr = (node.issueType || node.issuetype || "").toLowerCase();
+    const isEpic = typeStr.includes("epic");
+    const isSubtask = typeStr.includes("sub");
+    const title = node.summary || node.title || "";
+    const newEpicCtx = isEpic ? { key: node.key, title, status: node.statusName } : epicCtx;
+    // node.linked is backend MnaLinkedIssue[]; node.links is already-adapted (adapted nodes)
+    const rawLinks = node.linked || [];
+    const adaptedLinks = rawLinks.map(adaptLinkedToRow);
+    for (const link of adaptedLinks) {
+      rows.push({
+        initiative_key: init.key,
+        initiative_title: init.mnaName || init.summary,
+        initiative_status: init.statusName,
+        roadmap_key: ri?.key || "",
+        roadmap_title: ri?.summary || "",
+        roadmap_status: ri?.statusName || "",
+        epic_key: newEpicCtx?.key || "",
+        epic_title: newEpicCtx?.title || "",
+        epic_status: newEpicCtx?.status || "",
+        story_key: (!isEpic && !isSubtask) ? node.key : "",
+        story_title: (!isEpic && !isSubtask) ? title : "",
+        story_status: (!isEpic && !isSubtask) ? node.statusName : "",
+        story_issuetype: (!isEpic && !isSubtask) ? (node.issueType || node.issuetype || "") : "",
+        subtask_key: isSubtask ? node.key : "",
+        subtask_title: isSubtask ? title : "",
+        subtask_status: isSubtask ? node.statusName : "",
+        subtask_issuetype: isSubtask ? (node.issueType || node.issuetype || "") : "",
+        linked_key: link.linked_key,
+        linked_title: link.linked_title,
+        linked_status: link.linked_status,
+        linked_issuetype: link.linked_issuetype,
+        link_type: link.link_type,
+        link_direction: link.link_direction,
+      });
+    }
+    for (const child of node.children || []) walkNode(child, init, ri, newEpicCtx);
+  };
+  for (const init of apiData.initiatives) {
+    if (init.roadmapItems.length === 0) {
+      rows.push({ initiative_key: init.key, initiative_title: init.mnaName || init.summary, initiative_status: init.statusName, link_type: "NO LINKS" });
+      continue;
+    }
+    for (const ri of init.roadmapItems) {
+      const riLinks = (ri.linked || []).map(adaptLinkedToRow);
+      if (riLinks.length === 0 && (ri.children || []).length === 0) {
+        rows.push({ initiative_key: init.key, initiative_title: init.mnaName || init.summary, initiative_status: init.statusName, roadmap_key: ri.key, roadmap_title: ri.summary, roadmap_status: ri.statusName, link_type: "NO LINKS" });
+      }
+      for (const link of riLinks) {
+        rows.push({ initiative_key: init.key, initiative_title: init.mnaName || init.summary, initiative_status: init.statusName, roadmap_key: ri.key, roadmap_title: ri.summary, roadmap_status: ri.statusName, linked_key: link.linked_key, linked_title: link.linked_title, linked_status: link.linked_status, linked_issuetype: link.linked_issuetype, link_type: link.link_type, link_direction: link.link_direction });
+      }
+      for (const child of ri.children || []) walkNode(child, init, ri, null);
+    }
+    for (const l of init.linked || []) {
+      const link = adaptLinkedToRow(l);
+      rows.push({ initiative_key: init.key, initiative_title: init.mnaName || init.summary, initiative_status: init.statusName, linked_key: link.linked_key, linked_title: link.linked_title, linked_status: link.linked_status, linked_issuetype: link.linked_issuetype, link_type: link.link_type, link_direction: link.link_direction });
+    }
+  }
+  return rows;
 }
 
 export default function MnaRiLinkedIssueDashboard() {
-  const [csvText, setCsvText] = useState(SAMPLE_CSV);
-  const [inputMode, setInputMode] = useState("paste");
+  const [csvText, setCsvText] = useState("");
+  const [inputMode, setInputMode] = useState("api");
   const [uploadedFileName, setUploadedFileName] = useState("");
   const [uploadError, setUploadError] = useState("");
   const [isDragOver, setIsDragOver] = useState(false);
   const fileInputRef = useRef(null);
-  const [jiraJql, setJiraJql] = useState("issuekey = SBR-356 OR parent = SBR-356");
+  const [sbrKey, setSbrKey] = useState("SBR-356");
+  const [sbrInput, setSbrInput] = useState("SBR-356");
+  const [jiraJql, setJiraJql] = useState(`parent = SBR-356 ORDER BY key ASC`);
   const [jiraLoading, setJiraLoading] = useState(false);
   const [jiraError, setJiraError] = useState("");
   const [jiraLastPulled, setJiraLastPulled] = useState(0);
+
+  // Live API (Snowflake/Jira) state
+  const [apiData, setApiData] = useState(null);
+  const [apiLoading, setApiLoading] = useState(false);
+  const [apiError, setApiError] = useState("");
+  const [apiLastPulled, setApiLastPulled] = useState(0);
 
   const [search, setSearch] = useState("");
   const [selectedMnas, setSelectedMnas] = useState(() => new Set());
@@ -273,9 +414,10 @@ export default function MnaRiLinkedIssueDashboard() {
     const all = {};
     const walk = (node) => {
       all[node.id] = true;
-      node.children.forEach(walk);
+      (node.children || []).forEach(walk);
     };
-    hierarchy.forEach(walk);
+    const activeHierarchy = (inputMode === "api" && apiHierarchy?.length > 0) ? apiHierarchy : hierarchy;
+    activeHierarchy.forEach(walk);
     setExpanded(all);
   };
   const collapseAll = () => setExpanded({});
@@ -343,6 +485,9 @@ export default function MnaRiLinkedIssueDashboard() {
     });
   }, [parents, search, mnaFilter, riFilter, riskFilter]);
 
+  // Must be declared before any useMemo that references it in deps or body
+  const isApiMode = inputMode === "api" && !!apiData;
+
   const metrics = useMemo(() => {
     const linkedRows = filteredRows.filter(
       (r) =>
@@ -379,15 +524,36 @@ export default function MnaRiLinkedIssueDashboard() {
   );
 
   const riChart = useMemo(() => {
+    if (isApiMode && apiData) {
+      const inits = selectedMnas.size === 0 ? (apiData.initiatives || []) : (apiData.initiatives || []).filter((i) => selectedMnas.has(i.mnaName));
+      const buckets = new Map();
+      for (const init of inits) {
+        for (const ri of init.roadmapItems || []) {
+          const b = ri.riBucket || "Unknown";
+          if (!buckets.has(b)) buckets.set(b, { completions: [], linked: 0, zero: 0 });
+          const entry = buckets.get(b);
+          entry.completions.push(ri.completionPct ?? 0);
+          const hasLinks = ri.linked.length > 0 || ri.children.length > 0;
+          entry.linked += ri.linked.length;
+          if (!hasLinks) entry.zero++;
+        }
+      }
+      return [...buckets.entries()]
+        .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true }))
+        .map(([name, e]) => ({
+          name,
+          completion: e.completions.length ? Math.round(e.completions.reduce((a, v) => a + v, 0) / e.completions.length) : 0,
+          linked: e.linked,
+          zero: e.zero,
+        }));
+    }
     return ris.map((ri) => {
       const p = parents.filter((x) => x.ri === ri);
       const completionList = p
         .map((x) => calculateRICompletion(filteredRows, x.parent_key))
         .filter((v) => !Number.isNaN(v));
       const avg = completionList.length
-        ? Math.round(
-            completionList.reduce((a, b) => a + b, 0) / completionList.length,
-          )
+        ? Math.round(completionList.reduce((a, b) => a + b, 0) / completionList.length)
         : 0;
       return {
         name: ri,
@@ -396,14 +562,88 @@ export default function MnaRiLinkedIssueDashboard() {
         zero: p.filter((x) => x.links.length === 0).length,
       };
     });
-  }, [parents, filteredRows]);
+  }, [isApiMode, apiData, ris, parents, filteredRows, selectedMnas]);
 
-  const coverageData = [
-    { name: "Parents with links", value: metrics.parents - metrics.zeroParents },
-    { name: "Parents without links", value: metrics.zeroParents },
-  ];
+  const effectiveRows = useMemo(() => {
+    const base = isApiMode ? apiDataToRows(apiData) : rows;
+    if (selectedMnas.size === 0) return base;
+    return base.filter((r) => selectedMnas.has(r.initiative_title || getInitiative(r)));
+  }, [isApiMode, apiData, rows, selectedMnas]);
 
-  const PIE_COLORS = ["#10b981", "#f59e0b"];
+  const apiMnas = useMemo(() => {
+    if (!isApiMode) return [];
+    return (apiData?.filterOptions?.mnaNames || []);
+  }, [isApiMode, apiData]);
+
+  const apiInitiativeSummaries = useMemo(() => {
+    if (!isApiMode || !apiData) return [];
+    const all = apiData.initiatives || [];
+    const filtered = selectedMnas.size === 0 ? all : all.filter((i) => selectedMnas.has(i.mnaName));
+    return filtered.map((init) => ({
+      key: init.key,
+      name: init.mnaName,
+      completion: Math.round(init.completionPct * 10) / 10,
+      pending: Math.round((100 - init.completionPct) * 10) / 10,
+      riCount: init.roadmapItems.length,
+      linkedIssues: init.totalLinkCount,
+      zeroLinkRis: init.roadmapItems.filter((ri) => ri.linked.length === 0 && ri.children.length === 0).length,
+      isEndOfLife: init.isEndOfLife ?? false,
+      lifecycleLabel: init.lifecycleLabel ?? null,
+    })).sort((a, b) => a.completion - b.completion);
+  }, [isApiMode, apiData, selectedMnas]);
+
+  const apiCompletionAvg = useMemo(() => {
+    if (!isApiMode || !apiInitiativeSummaries.length) return 0;
+    return Math.round(apiInitiativeSummaries.reduce((s, x) => s + x.completion, 0) / apiInitiativeSummaries.length);
+  }, [isApiMode, apiInitiativeSummaries]);
+
+  const apiMetrics = useMemo(() => {
+    if (!isApiMode || !apiData) return null;
+    const inits = selectedMnas.size === 0
+      ? (apiData.initiatives || [])
+      : (apiData.initiatives || []).filter((i) => selectedMnas.has(i.mnaName));
+    const kpis = apiData.kpis || {};
+    return {
+      mnas: inits.length,
+      parents: inits.reduce((s, i) => s + i.roadmapItems.length, 0),
+      linkedRows: inits.reduce((s, i) => s + i.totalLinkCount, 0),
+      zeroParents: inits.filter((i) => i.roadmapItems.length === 0 || i.roadmapItems.every((r) => r.children.length === 0 && r.linked.length === 0)).length,
+      blockers: kpis.openBlockers ?? 0,
+      gaps: kpis.openDependencies ?? 0,
+    };
+  }, [isApiMode, apiData, selectedMnas]);
+
+  const apiHierarchy = useMemo(() => {
+    if (!isApiMode || !apiData) return [];
+    const all = apiData.initiatives || [];
+    const filtered = selectedMnas.size === 0 ? all : all.filter((i) => selectedMnas.has(i.mnaName));
+    return filtered.map((init) => adaptInitiativeToNode(init));
+  }, [isApiMode, apiData, selectedMnas]);
+
+  const apiMnaChart = useMemo(() => {
+    return apiInitiativeSummaries.map((g) => ({
+      name: g.name, completion: g.completion, pending: g.pending, linked: g.linkedIssues,
+      isEndOfLife: g.isEndOfLife, lifecycleLabel: g.lifecycleLabel,
+    }));
+  }, [apiInitiativeSummaries]);
+
+  const coverageData = useMemo(() => {
+    if (isApiMode && apiData) {
+      const inits = selectedMnas.size === 0 ? (apiData.initiatives || []) : (apiData.initiatives || []).filter((i) => selectedMnas.has(i.mnaName));
+      const riList = inits.flatMap((i) => i.roadmapItems || []);
+      const withLinks = riList.filter((ri) => ri.linked.length > 0 || ri.children.length > 0).length;
+      return [
+        { name: "RIs with links", value: withLinks },
+        { name: "RIs without links", value: riList.length - withLinks },
+      ];
+    }
+    return [
+      { name: "Parents with links", value: metrics.parents - metrics.zeroParents },
+      { name: "Parents without links", value: metrics.zeroParents },
+    ];
+  }, [isApiMode, apiData, metrics, selectedMnas]);
+
+  const PIE_COLORS = ["#00B050", "#F37021"];
 
   const exportFiltered = () => {
     const header =
@@ -489,7 +729,38 @@ export default function MnaRiLinkedIssueDashboard() {
     setUploadedFileName("");
     setUploadError("");
     setLoadedAt(Date.now());
+    setInputMode("paste");
+    setApiData(null);
     if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  async function pullFromApi(forceRefresh = false, sbr = sbrKey) {
+    setApiLoading(true);
+    setApiError("");
+    try {
+      const params = new URLSearchParams();
+      params.set("sbr", sbr);
+      if (selectedMnas.size > 0) params.set("mna", [...selectedMnas].join(","));
+      if (riFilter !== "all") params.set("ri", riFilter);
+      if (riskFilter !== "all") params.set("risk", riskFilter);
+      if (search) params.set("q", search);
+      if (forceRefresh) params.set("refresh", "true");
+      const resp = await fetch(`/api/mna?${params.toString()}`);
+      if (!resp.ok) {
+        let msg = `HTTP ${resp.status}`;
+        try { const j = await resp.json(); if (j.reason) msg = j.reason; else if (j.error) msg = j.error; } catch { /* ignore */ }
+        throw new Error(msg);
+      }
+      const data = await resp.json();
+      if (!data.initiatives) throw new Error("Unexpected API response shape");
+      setApiData(data);
+      setApiLastPulled(Date.now());
+      setLoadedAt(Date.now());
+    } catch (err) {
+      setApiError(err.message || String(err));
+    } finally {
+      setApiLoading(false);
+    }
   }
 
   async function pullFromJira() {
@@ -528,52 +799,118 @@ export default function MnaRiLinkedIssueDashboard() {
     }
   }
 
+  // Auto-pull from API on mount
+  useEffect(() => {
+    pullFromApi();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   return (
-    <div className="min-h-screen bg-slate-50 p-6 text-slate-900">
+    <div className="min-h-screen bg-gray-50 p-6 text-slate-900">
       <div className="mx-auto max-w-7xl space-y-6">
         <div className="flex flex-col gap-3 md:flex-row md:items-end md:justify-between">
           <div>
-            <div className="mb-2 inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
-              <BarChart3 className="h-3.5 w-3.5" /> Leadership View
+            <div className="mb-2 flex items-center gap-2">
+              <div
+                className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-semibold text-white"
+                style={{ background: AV.navy }}
+              >
+                <BarChart3 className="h-3.5 w-3.5" /> Executive Dashboard
+              </div>
+              <div
+                className="inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium"
+                style={{ background: AV.orangeLight, color: AV.orange }}
+              >
+                <span className="h-2 w-2 rounded-full inline-block" style={{ background: AV.orange }} />
+                Live · Snowflake + Jira
+              </div>
             </div>
-            <h1 className="text-3xl font-bold tracking-tight">
-              M&amp;A Jira Hierarchy + Linked-Issue Dashboard
+            <h1 className="text-3xl font-bold tracking-tight" style={{ color: AV.navy }}>
+              SBR Jira Intelligence
             </h1>
-            <p className="mt-1 text-sm text-slate-600">
-              SBR-356 → Initiative → Roadmap Item → Epic → Story/Task/Sub-task → linked Jira. Paste or upload your CSV.
+            <p className="mt-1 text-sm text-slate-500">
+              Hierarchy dashboard for any SBR · Initiative → Roadmap Item → Epic → Story → linked Jira issues · Snowflake-first with Jira REST fallback
             </p>
+            <div className="mt-3 flex items-center gap-2">
+              <label className="text-xs font-semibold text-slate-500 uppercase tracking-wide">SBR:</label>
+              <input
+                type="text"
+                value={sbrInput}
+                onChange={(e) => setSbrInput(e.target.value.toUpperCase())}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter") {
+                    const val = sbrInput.trim().toUpperCase();
+                    if (val) {
+                      setSbrKey(val);
+                      setJiraJql(`parent = ${val} ORDER BY key ASC`);
+                      if (inputMode === "api") pullFromApi(true, val);
+                    }
+                  }
+                }}
+                placeholder="e.g. SBR-356"
+                className="rounded-lg border border-slate-300 px-3 py-1.5 text-sm font-mono focus:outline-none focus:ring-2"
+                style={{ width: 140 }}
+              />
+              <button
+                type="button"
+                onClick={() => {
+                  const val = sbrInput.trim().toUpperCase();
+                  if (val) {
+                    setSbrKey(val);
+                    setJiraJql(`parent = ${val} ORDER BY key ASC`);
+                    if (inputMode === "api") pullFromApi(true, val);
+                  }
+                }}
+                className="rounded-lg px-3 py-1.5 text-sm font-medium text-white transition hover:opacity-90"
+                style={{ background: AV.orange }}
+              >
+                Load SBR
+              </button>
+              {sbrKey && (
+                <span className="rounded-full px-2.5 py-1 text-xs font-semibold text-white" style={{ background: AV.navy }}>
+                  {sbrKey}
+                </span>
+              )}
+            </div>
           </div>
-          <Button onClick={exportFiltered} className="gap-2 rounded-2xl shadow-sm">
-            <Download className="h-4 w-4" /> Export Filtered CSV
-          </Button>
+          <div className="flex items-center gap-2">
+            <Button
+              onClick={exportFiltered}
+              variant="outline"
+              className="gap-2 rounded-xl border-slate-300"
+            >
+              <Download className="h-4 w-4" /> Export CSV
+            </Button>
+          </div>
         </div>
 
-        <div className="flex flex-wrap gap-1 rounded-2xl border border-slate-200 bg-white p-1 shadow-sm">
+        <div className="flex flex-wrap gap-1 rounded-xl border border-slate-200 bg-white p-1 shadow-sm">
           {[
-            { id: "overview", label: "Overview" },
-            { id: "executive", label: "Executive Portfolio" },
-            { id: "quality", label: "Data Quality" },
-            { id: "live", label: "Live Pull" },
+            { id: "overview", label: "Dashboard", icon: <BarChart3 className="h-3.5 w-3.5" /> },
+            { id: "executive", label: "Executive Summary", icon: <TrendingUp className="h-3.5 w-3.5" /> },
+            { id: "quality", label: "Data Quality", icon: <CircleCheck className="h-3.5 w-3.5" /> },
+            { id: "live", label: "Glean: SBR Fetch", icon: <RefreshCw className="h-3.5 w-3.5" /> },
           ].map((t) => (
             <Button
               key={t.id}
-              variant={activeTab === t.id ? "default" : "ghost"}
+              variant="ghost"
               size="sm"
               onClick={() => setActiveTab(t.id)}
-              className="rounded-xl"
+              className="gap-1.5 rounded-lg text-sm"
+              style={activeTab === t.id ? { background: AV.navy, color: "white" } : {}}
             >
-              {t.label}
+              {t.icon} {t.label}
             </Button>
           ))}
         </div>
 
-        {mnas.length > 0 && (
+        {(isApiMode ? apiMnas : mnas).length > 0 && (
           <Card className="rounded-2xl border-slate-200 shadow-sm">
             <CardContent className="flex flex-wrap items-center gap-2 p-3">
               <span className="text-xs font-semibold uppercase tracking-wide text-slate-500">
-                Filter by M&A
+                Filter by Initiative
               </span>
-              {mnas.map((m) => {
+              {(isApiMode ? apiMnas : mnas).map((m) => {
                 const active = isMnaActive(m);
                 return (
                   <button
@@ -582,9 +919,10 @@ export default function MnaRiLinkedIssueDashboard() {
                     onClick={() => toggleMna(m)}
                     className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
                       active
-                        ? "border-slate-900 bg-slate-900 text-white"
+                        ? "text-white border-transparent"
                         : "border-slate-300 bg-white text-slate-600 hover:bg-slate-50"
                     }`}
+                    style={active ? { background: AV.orange, borderColor: AV.orange } : {}}
                     aria-pressed={active}
                   >
                     {m}
@@ -596,11 +934,11 @@ export default function MnaRiLinkedIssueDashboard() {
               </Button>
               <span className="ml-auto text-xs text-slate-500">
                 {selectedMnas.size === 0
-                  ? `Showing all ${mnas.length} M&As`
-                  : `Showing ${selectedMnas.size} of ${mnas.length} M&As`}
+                  ? `Showing all ${(isApiMode ? apiMnas : mnas).length} initiatives`
+                  : `Showing ${selectedMnas.size} of ${(isApiMode ? apiMnas : mnas).length} initiatives`}
               </span>
-              <InfoTip title="Global M&A filter" side="left">
-                Click M&A chips to focus the entire dashboard - <b>every chart, KPI and table on every tab</b> updates instantly. Click again to deselect. <b>Show all</b> clears the filter. The footer record count always reflects the full dataset.
+              <InfoTip title="Initiative filter" side="left">
+                Click initiative chips to focus the entire dashboard — <b>every chart, KPI, and table on every tab</b> updates instantly. Click again to deselect. <b>Show all</b> clears the filter.
               </InfoTip>
             </CardContent>
           </Card>
@@ -612,9 +950,9 @@ export default function MnaRiLinkedIssueDashboard() {
           <CardContent className="p-4">
             <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
               <div className="flex items-center gap-2 font-semibold">
-                <FileSpreadsheet className="h-4 w-4" /> Data Source
+                <FileSpreadsheet className="h-4 w-4" /> Live Data
                 <InfoTip title="How to load data" side="right">
-                  Two ways to load Jira data: <b>Paste</b> exported CSV text, or <b>Upload</b> a <code>.csv</code> file. We validate that at least <code>roadmap_key</code> (or <code>parent_key</code>) and <code>roadmap_title</code> (or <code>parent_title</code>) columns exist. All other columns are optional and used when present.
+                  Load Jira data as CSV via <b>Paste</b>, <b>Upload</b>, or <b>Live Jira Fetch</b>. Minimum required columns: <code>roadmap_key</code> and <code>roadmap_title</code> (or their <code>parent_*</code> equivalents). All other columns are optional.
                 </InfoTip>
               </div>
               <div className="flex flex-wrap gap-2">
@@ -623,14 +961,16 @@ export default function MnaRiLinkedIssueDashboard() {
                   size="sm"
                   onClick={() => setInputMode("paste")}
                   className="gap-2"
+                  style={inputMode === "paste" ? { background: AV.navy, color: "white", borderColor: AV.navy } : {}}
                 >
-                  <FileSpreadsheet className="h-4 w-4" /> Paste
+                  <FileSpreadsheet className="h-4 w-4" /> Paste CSV
                 </Button>
                 <Button
                   variant={inputMode === "upload" ? "default" : "outline"}
                   size="sm"
                   onClick={() => setInputMode("upload")}
                   className="gap-2"
+                  style={inputMode === "upload" ? { background: AV.navy, color: "white", borderColor: AV.navy } : {}}
                 >
                   <Upload className="h-4 w-4" /> Upload CSV
                 </Button>
@@ -639,8 +979,18 @@ export default function MnaRiLinkedIssueDashboard() {
                   size="sm"
                   onClick={() => setInputMode("jira")}
                   className="gap-2"
+                  style={inputMode === "jira" ? { background: AV.navy, color: "white", borderColor: AV.navy } : {}}
                 >
-                  <RefreshCw className="h-4 w-4" /> Live Jira
+                  <RefreshCw className="h-4 w-4" /> Live Jira Fetch
+                </Button>
+                <Button
+                  variant={inputMode === "api" ? "default" : "outline"}
+                  size="sm"
+                  onClick={() => { setInputMode("api"); if (!apiData) pullFromApi(); }}
+                  className="gap-2"
+                  style={inputMode === "api" ? { background: AV.navy, color: "white", borderColor: AV.navy } : {}}
+                >
+                  <TrendingUp className="h-4 w-4" /> Live Data (API)
                 </Button>
                 <Button
                   variant="ghost"
@@ -671,7 +1021,7 @@ export default function MnaRiLinkedIssueDashboard() {
                   <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
                     JQL
                   </label>
-                  <InfoTip title="Live Jira pull" side="right">
+                  <InfoTip title="Live Jira Fetch" side="right">
                     Hits <code>/api/jira-export</code> (server-side, basic-auth via Vercel env vars). The function runs your JQL against Avalara Jira and returns CSV in this dashboard's schema. Each issue produces one row per linked issue (or a single <code>NO LINKS</code> row).
                   </InfoTip>
                 </div>
@@ -711,6 +1061,65 @@ export default function MnaRiLinkedIssueDashboard() {
                         Ensure <code>JIRA_BASE_URL</code>, <code>JIRA_EMAIL</code>, <code>JIRA_API_TOKEN</code> are set in Vercel env vars and the JQL is valid.
                       </div>
                     </div>
+                  </div>
+                )}
+              </div>
+            )}
+            {inputMode === "api" && (
+              <div className="space-y-3">
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="text-xs font-semibold uppercase tracking-wide text-slate-500">
+                    Auto-Select: Snowflake + Jira REST
+                  </label>
+                  <InfoTip title="Live API pull" side="right">
+                    Calls <code>/api/mna?sbr=…</code> — queries <b>Snowflake</b> (<code>DS_PROD_INGEST.JIRA.ISSUES</code>) first, falls back to <b>Jira REST</b> if Snowflake is unavailable. Returns the full initiative hierarchy pre-assembled with completion rollup. Change the SBR key above to load any SBR.
+                  </InfoTip>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <Button
+                    size="sm"
+                    onClick={() => pullFromApi(false)}
+                    disabled={apiLoading}
+                    className="gap-2"
+                  >
+                    {apiLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <TrendingUp className="h-4 w-4" />}
+                    {apiLoading ? "Loading..." : "Pull from API"}
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => pullFromApi(true)}
+                    disabled={apiLoading}
+                    className="gap-2"
+                  >
+                    <RefreshCw className="h-4 w-4" /> Force Refresh
+                  </Button>
+                  {apiLastPulled > 0 && !apiError && apiData && (
+                    <span className="text-xs text-slate-500">
+                      Last pulled {new Date(apiLastPulled).toLocaleTimeString()} ·{" "}
+                      <span className="font-medium">{apiData.repoHealth?.sourceLabel ?? "unknown"}</span>
+                      {apiData.cacheStatus === "HIT" && (
+                        <span className="ml-1 rounded-full bg-sky-100 px-2 py-0.5 text-[10px] text-sky-700">cached {apiData.cacheAgeSeconds}s</span>
+                      )}
+                    </span>
+                  )}
+                </div>
+                {apiError && (
+                  <div className="flex items-start gap-2 rounded-xl border border-rose-200 bg-rose-50 p-3 text-sm text-rose-800">
+                    <AlertTriangle className="mt-0.5 h-4 w-4 flex-shrink-0" />
+                    <div>
+                      <div className="font-semibold">API pull failed</div>
+                      <div className="text-xs">{apiError}</div>
+                      <div className="mt-1 text-[11px] text-rose-700">
+                        Set <code>MNA_DATA_SOURCE</code> (auto/jira/snowflake), Snowflake creds (<code>SNOWFLAKE_USER</code>, <code>SNOWFLAKE_PRIVATE_KEY</code>, etc.) and/or Jira creds (<code>JIRA_EMAIL</code>, <code>JIRA_API_TOKEN</code>) in Vercel env vars.
+                      </div>
+                    </div>
+                  </div>
+                )}
+                {apiData && !apiError && (
+                  <div className="rounded-xl border border-emerald-200 bg-emerald-50 px-4 py-2 text-xs text-emerald-800">
+                    ✓ Loaded {apiData.initiatives.length} initiative(s) · {apiData.extractionTelemetry?.roadmapItemCount ?? "?"} RIs · source:{" "}
+                    <b style={{ color: AV.orange }}>{apiData.repoHealth?.sourceLabel}</b>
                   </div>
                 )}
               </div>
@@ -786,42 +1195,46 @@ export default function MnaRiLinkedIssueDashboard() {
         {/* METRICS */}
         <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
           <Metric
-            title="M&As"
-            value={metrics.mnas}
+            title="Initiatives"
+            value={(isApiMode ? apiMetrics : metrics)?.mnas ?? 0}
             icon={<CircleCheck />}
-            tip="Distinct Initiatives (M&A acquisitions). Counted from initiative_title / initiative_key / mna in the CSV."
+            accent={AV.navy}
+            tip="Distinct Initiatives linked under this SBR."
           />
           <Metric
-            title="RI / Roadmap Items"
-            value={metrics.parents}
+            title="Roadmap Items"
+            value={(isApiMode ? apiMetrics : metrics)?.parents ?? 0}
             icon={<CircleDashed />}
-            tip="Total Roadmap Items (RIs) loaded. One per unique roadmap_key / parent_key. Each RI is a parent of Epics, Stories, Sub-tasks and linked Jira records."
+            accent={AV.blue}
+            tip="Total Roadmap Items (RIs) loaded."
           />
           <Metric
             title="Linked Issues"
-            value={metrics.linkedRows}
+            value={(isApiMode ? apiMetrics : metrics)?.linkedRows ?? 0}
             icon={<Link2 />}
-            tip="CSV rows with a populated linked_key (rows marked link_type = NO LINKS are excluded). Use this to gauge external dependency volume."
+            accent={AV.blue}
+            tip="Total linked issues across all RIs and descendants."
           />
           <Metric
-            title="No-Link Parents"
-            value={metrics.zeroParents}
+            title={isApiMode ? "Open Gaps" : "No-Link RIs"}
+            value={(isApiMode ? apiMetrics : metrics)?.zeroParents ?? 0}
             icon={<AlertTriangle />}
             warn
-            tip="Roadmap Items that have no linked Jira issues. These are gaps in dependency mapping — leadership should ask the team why an RI has no downstream tracking."
+            tip={isApiMode ? "Initiatives with no Roadmap Items or all empty RIs — gaps in SBR coverage." : "Roadmap Items that have no linked Jira issues."}
           />
           <Metric
             title="Blockers"
-            value={metrics.blockers}
+            value={(isApiMode ? apiMetrics : metrics)?.blockers ?? 0}
             icon={<AlertTriangle />}
-            warn
-            tip="Linked rows whose link_type contains 'block' (e.g. 'is blocked by'). Active risk: these have to clear before the parent RI can complete."
+            danger
+            tip="Active 'is blocked by' linked issues that are not yet done."
           />
           <Metric
-            title="Gaps"
-            value={metrics.gaps}
+            title={isApiMode ? "Open Deps" : "Gap Issues"}
+            value={(isApiMode ? apiMetrics : metrics)?.gaps ?? 0}
             icon={<Search />}
-            tip="Linked rows whose title contains '[GAP]' (or the word 'gap'). These are explicit, team-flagged gaps in M&A onboarding coverage."
+            warn
+            tip={isApiMode ? "Open 'blocks' links — issues this initiative is blocking." : "Linked rows whose title contains '[GAP]'."}
           />
         </div>
 
@@ -831,27 +1244,26 @@ export default function MnaRiLinkedIssueDashboard() {
             <div className="mb-4 flex flex-wrap items-center justify-between gap-2">
               <div>
                 <div className="flex items-center gap-2">
-                  <h2 className="font-semibold">M&amp;A Onboarding Progress</h2>
+                  <h2 className="font-semibold">SBR-Linked Initiatives Progress</h2>
                   <InfoTip title="How completion is calculated" side="right">
-                    Each Initiative's completion is the average of its Roadmap Items (RIs). An RI's completion is the % of its child Jira records ({" "}
-                    <code>epic_key</code>, <code>story_key</code>, <code>subtask_key</code>, <code>source_issue_key</code>, plus linked records) whose status is Done / Closed / Resolved / Cancelled. RIs with no children fall back to their own status. Shared linked issues are de-duplicated within an Initiative. <b>Pending = 100 − Completion.</b>
+                    Each Initiative's completion is the average across its Roadmap Items (RIs). An RI's completion = % of child Jira records (epics, stories, sub-tasks, linked issues) whose status is Done / Closed / Resolved / Cancelled. RIs with no children fall back to their own status. Linked issues are de-duplicated per Initiative. <b>Pending = 100 − Completion.</b>
                   </InfoTip>
                 </div>
                 <p className="text-xs text-slate-500">
-                  Portfolio average: <b>{initiativeCompletionAvg}%</b> complete · <b>{100 - initiativeCompletionAvg}%</b> pending
+                  Portfolio average: <b style={{ color: AV.orange }}>{isApiMode ? apiCompletionAvg : initiativeCompletionAvg}%</b> complete · <b style={{ color: AV.orange }}>{100 - (isApiMode ? apiCompletionAvg : initiativeCompletionAvg)}%</b> pending
                 </p>
               </div>
-              <div className="inline-flex items-center gap-2 rounded-full bg-slate-900 px-3 py-1 text-xs font-medium text-white">
-                <TrendingUp className="h-3.5 w-3.5" /> Rollup from Jira status
+              <div className="inline-flex items-center gap-2 rounded-full px-3 py-1 text-xs font-medium text-white" style={{ background: AV.navy }}>
+                <TrendingUp className="h-3.5 w-3.5" /> {isApiMode ? `Rollup from ${apiData?.repoHealth?.sourceLabel ?? "API"}` : "Rollup from Jira status"}
               </div>
             </div>
             <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-              {initiativeSummaries.map((g) => (
+              {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).map((g) => (
                 <InitiativeCard key={g.key} g={g} />
               ))}
-              {initiativeSummaries.length === 0 && (
+              {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).length === 0 && (
                 <div className="col-span-full rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
-                  No Initiative data in the current CSV.
+                  {isApiMode && apiLoading ? "Loading from API..." : isApiMode ? "No initiative data returned." : "No Initiative data in the current CSV."}
                 </div>
               )}
             </div>
@@ -863,17 +1275,21 @@ export default function MnaRiLinkedIssueDashboard() {
           <Card className="rounded-2xl border-slate-200 shadow-sm lg:col-span-2">
             <CardContent className="p-4">
               <div className="mb-4 flex items-center gap-2">
-                <h2 className="font-semibold">Completion vs Pending by M&amp;A</h2>
+                <h2 className="font-semibold">Completion vs Pending (Per Initiative)</h2>
                 <InfoTip title="What this shows" side="right">
-                  Stacked bar of <b>Completion %</b> (green) vs <b>Pending %</b> (amber) for each Initiative.
-                  Driven by Jira statuses of epics, stories, sub-tasks and linked records under each RI.
-                  Use this to see which acquisitions still have material onboarding work.
+                  Stacked bar of <b>Completion %</b> (green) vs <b>Pending %</b> (orange) for each Initiative under this SBR. Driven by Jira statuses of epics, stories, sub-tasks and linked records under each Roadmap Item. Use this to see which initiatives still have material open work.
                 </InfoTip>
               </div>
+              {isApiMode && (isApiMode ? apiMnaChart : mnaChart).some((r) => r.isEndOfLife) && (
+                <div className="mb-2 flex items-center gap-1.5 text-[11px]" style={{ color: "#C00000" }}>
+                  <span className="inline-block h-2.5 w-2.5 rounded-sm border-2 bg-slate-300" style={{ borderColor: "#C00000" }} />
+                  <span>Grey bars with red outline = End of Life / Retired (LeanIX + M&A engineering records)</span>
+                </div>
+              )}
               <div className="h-72">
                 <ResponsiveContainer width="100%" height="100%">
                   <BarChart
-                    data={mnaChart}
+                    data={isApiMode ? apiMnaChart : mnaChart}
                     margin={{ top: 8, right: 12, left: 0, bottom: 48 }}
                   >
                     <XAxis
@@ -883,22 +1299,52 @@ export default function MnaRiLinkedIssueDashboard() {
                       interval={0}
                       height={70}
                       fontSize={11}
+                      tick={({ x, y, payload }) => {
+                        const row = (isApiMode ? apiMnaChart : mnaChart).find((r) => r.name === payload.value);
+                        return (
+                          <g transform={`translate(${x},${y})`}>
+                            <text x={0} y={0} dy={8} textAnchor="end" fontSize={11} transform="rotate(-25)"
+                              fill={row?.isEndOfLife ? "#9CA3AF" : "#374151"}
+                            >
+                              {payload.value}{row?.isEndOfLife ? " ⊘" : ""}
+                            </text>
+                          </g>
+                        );
+                      }}
                     />
                     <YAxis domain={[0, 100]} tickFormatter={(v) => `${v}%`} />
                     <Tooltip
-                      formatter={(value, name) =>
-                        name === "completion" || name === "pending"
-                          ? [`${value}%`, name === "completion" ? "Completion" : "Pending"]
-                          : [value, name]
-                      }
+                      content={({ active, payload }) => {
+                        if (!active || !payload?.length) return null;
+                        const row = payload[0]?.payload;
+                        return (
+                          <div className="rounded-xl border border-slate-200 bg-white p-3 text-xs shadow-xl">
+                            <div className="font-semibold text-slate-800 mb-1">{row?.name}</div>
+                            {row?.isEndOfLife && (
+                              <div className="mb-1.5 font-semibold" style={{ color: "#C00000" }}>
+                                ⊘ {row.lifecycleLabel || "End of Life / Retired"}
+                              </div>
+                            )}
+                            {payload.map((p) => (
+                              <div key={p.dataKey} className="flex items-center gap-2">
+                                <span className="inline-block h-2.5 w-2.5 rounded-sm" style={{ background: p.fill }} />
+                                <span className="capitalize">{p.name}</span>
+                                <span className="ml-auto font-mono">{p.value}%</span>
+                              </div>
+                            ))}
+                          </div>
+                        );
+                      }}
                     />
-                    <Bar
-                      dataKey="completion"
-                      stackId="pct"
-                      name="completion"
-                      fill="#10b981"
-                      radius={[0, 0, 0, 0]}
-                    >
+                    <Bar dataKey="completion" stackId="pct" name="Completion" fill="#00B050" radius={[0, 0, 0, 0]}>
+                      {(isApiMode ? apiMnaChart : mnaChart).map((row, i) => (
+                        <Cell
+                          key={i}
+                          fill={row.isEndOfLife ? "#9CA3AF" : "#00B050"}
+                          stroke={row.isEndOfLife ? "#C00000" : undefined}
+                          strokeWidth={row.isEndOfLife ? 2 : 0}
+                        />
+                      ))}
                       <LabelList
                         dataKey="completion"
                         position="insideTop"
@@ -907,13 +1353,16 @@ export default function MnaRiLinkedIssueDashboard() {
                         fontSize={11}
                       />
                     </Bar>
-                    <Bar
-                      dataKey="pending"
-                      stackId="pct"
-                      name="pending"
-                      fill="#f59e0b"
-                      radius={[8, 8, 0, 0]}
-                    />
+                    <Bar dataKey="pending" stackId="pct" name="Pending" fill="#F37021" radius={[8, 8, 0, 0]}>
+                      {(isApiMode ? apiMnaChart : mnaChart).map((row, i) => (
+                        <Cell
+                          key={i}
+                          fill={row.isEndOfLife ? "#D1D5DB" : "#F37021"}
+                          stroke={row.isEndOfLife ? "#C00000" : undefined}
+                          strokeWidth={row.isEndOfLife ? 2 : 0}
+                        />
+                      ))}
+                    </Bar>
                   </BarChart>
                 </ResponsiveContainer>
               </div>
@@ -923,10 +1372,9 @@ export default function MnaRiLinkedIssueDashboard() {
           <Card className="rounded-2xl border-slate-200 shadow-sm">
             <CardContent className="p-4">
               <div className="mb-4 flex items-center gap-2">
-                <h2 className="font-semibold">Parent Coverage</h2>
+                <h2 className="font-semibold">RI Coverage</h2>
                 <InfoTip title="What this shows" side="left">
-                  Share of RIs that have at least one linked Jira issue vs RIs with none.
-                  Low coverage means dependencies aren't being mapped — a risk indicator for leadership.
+                  Share of Roadmap Items (RIs) that have at least one linked Jira issue vs RIs with none. Low coverage means dependencies aren't being mapped — a risk signal for leadership review.
                 </InfoTip>
               </div>
               <div className="h-72">
@@ -954,9 +1402,9 @@ export default function MnaRiLinkedIssueDashboard() {
         <Card className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="p-4">
             <div className="mb-4 flex items-center gap-2">
-              <h2 className="font-semibold">RI Coverage View</h2>
+              <h2 className="font-semibold">Workstream Coverage by RI Bucket</h2>
               <InfoTip title="What this shows" side="right">
-                For each RI bucket (RI1–RI5, parsed from the <code>(RIn)</code> token in roadmap titles), the average completion across RIs in that bucket, plus how many linked issues and how many zero-link parents fall in it. Use it to compare onboarding workstreams across acquisitions.
+                Groups Roadmap Items by RI bucket (e.g. RI1, RI2 — parsed from the <code>(RIn)</code> token in roadmap titles or labels). Shows average completion per bucket, total linked issues, and count of zero-link RIs. Use this to compare progress across workstreams for any SBR.
               </InfoTip>
             </div>
             <div className="h-56">
@@ -969,19 +1417,19 @@ export default function MnaRiLinkedIssueDashboard() {
                     dataKey="completion"
                     name="Avg Completion %"
                     radius={[8, 8, 0, 0]}
-                    fill="#10b981"
+                    fill="#00B050"
                   />
                   <Bar
                     dataKey="linked"
                     name="Linked Issues"
                     radius={[8, 8, 0, 0]}
-                    fill="#0ea5e9"
+                    fill="#0369A1"
                   />
                   <Bar
                     dataKey="zero"
                     name="Zero-Link Parents"
                     radius={[8, 8, 0, 0]}
-                    fill="#f59e0b"
+                    fill="#EAB308"
                   />
                 </BarChart>
               </ResponsiveContainer>
@@ -994,9 +1442,9 @@ export default function MnaRiLinkedIssueDashboard() {
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2">
                 <div>
-                  <h2 className="font-semibold">Detailed View</h2>
+                  <h2 className="font-semibold">Issue Hierarchy &amp; Dependencies</h2>
                   <p className="text-xs text-slate-500">
-                    Switch between expandable hierarchy and flat linked-issue table.
+                    Drill down into the full SBR → Initiative → Roadmap → Epic → Story hierarchy with live status
                   </p>
                 </div>
                 <InfoTip title="How to read this" side="right">
@@ -1012,6 +1460,7 @@ export default function MnaRiLinkedIssueDashboard() {
                   size="sm"
                   onClick={() => setViewMode("hierarchy")}
                   className="gap-2"
+                  style={viewMode === "hierarchy" ? { background: AV.navy, color: "white", borderColor: AV.navy } : {}}
                 >
                   <ChevronRight className="h-4 w-4" /> Hierarchy
                 </Button>
@@ -1019,6 +1468,7 @@ export default function MnaRiLinkedIssueDashboard() {
                   variant={viewMode === "flat" ? "default" : "outline"}
                   size="sm"
                   onClick={() => setViewMode("flat")}
+                  style={viewMode === "flat" ? { background: AV.navy, color: "white", borderColor: AV.navy } : {}}
                 >
                   Flat Links
                 </Button>
@@ -1072,25 +1522,25 @@ export default function MnaRiLinkedIssueDashboard() {
 
             {viewMode === "hierarchy" ? (
               <HierarchyView
-                hierarchy={hierarchy}
+                hierarchy={isApiMode ? apiHierarchy : hierarchy}
                 expanded={expanded}
                 toggle={toggle}
                 search={search}
                 mnaFilter={mnaFilter}
                 riFilter={riFilter}
                 riskFilter={riskFilter}
-                rows={filteredRows}
+                rows={isApiMode ? [] : filteredRows}
               />
             ) : (
               <div className="mt-4 overflow-hidden rounded-2xl border border-slate-200">
                 <table className="w-full border-collapse text-sm">
-                  <thead className="bg-slate-100 text-left text-xs uppercase tracking-wide text-slate-600">
+                  <thead style={{ background: AV.navy }}>
                     <tr>
-                      <th className="p-3">M&A / RI Parent</th>
-                      <th className="p-3">Parent Status</th>
-                      <th className="p-3">Linked Issue</th>
-                      <th className="p-3">Linked Status</th>
-                      <th className="p-3">Link Type</th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Initiative / Roadmap Item</th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Status</th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Linked Issue</th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Linked Status</th>
+                      <th className="p-3 text-left text-xs font-semibold uppercase tracking-wide text-white">Link Type</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -1117,11 +1567,11 @@ export default function MnaRiLinkedIssueDashboard() {
         </Card>
         </>)}
 
-        {activeTab === "executive" && <ExecutivePortfolio rows={filteredRows} />}
-        {activeTab === "quality" && <DataQuality rows={filteredRows} />}
+        {activeTab === "executive" && <ExecutivePortfolio rows={effectiveRows} />}
+        {activeTab === "quality" && <DataQuality rows={effectiveRows} />}
         {activeTab === "live" && <GleanAgent />}
 
-        <SourceBanner rows={rows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} />
+        <SourceBanner rows={effectiveRows} uploadedFileName={uploadedFileName} loadedAt={loadedAt} inputMode={inputMode} apiData={apiData} sbrKey={sbrKey} />
       </div>
     </div>
   );
@@ -1130,35 +1580,34 @@ export default function MnaRiLinkedIssueDashboard() {
 function InitiativeCard({ g }) {
   const tone = completionTone(g.completion);
   return (
-    <div className="relative rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+    <div
+      className="relative rounded-xl border bg-white p-4 shadow-sm overflow-hidden"
+      style={{ borderLeft: `4px solid ${tone.bar}` }}
+    >
       <div className="mb-2 flex items-start justify-between gap-2">
         <div>
-          <div className="text-base font-semibold text-slate-900">{g.name}</div>
-          <div className="text-[11px] uppercase tracking-wide text-slate-500">
+          <div className="text-sm font-bold text-slate-900">{g.name}</div>
+          <div className="text-[11px] text-slate-400 mt-0.5">
             {g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}
           </div>
         </div>
         <InfoTip title={`${g.name} rollup`} side="left">
-          Completion is the avg of this Initiative's {g.riCount} RI{g.riCount === 1 ? "" : "s"}. Each RI is scored from its child epics / stories / sub-tasks plus de-duped linked issues — Done/Closed/Resolved/Cancelled count as complete. Pending = 100 − Completion.
+          Completion is the avg of this Initiative's {g.riCount} RI{g.riCount === 1 ? "" : "s"}. Done/Closed/Resolved count as complete.
         </InfoTip>
       </div>
-      <div className="flex items-baseline gap-2">
+      <div className="flex items-baseline gap-1.5">
         <span className={`text-3xl font-bold ${tone.text}`}>{g.completion}%</span>
-        <span className="text-xs text-slate-500">complete</span>
+        <span className="text-xs text-slate-400">complete</span>
       </div>
-      <div className="mt-2 h-2 w-full overflow-hidden rounded-full bg-slate-100">
+      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-100">
         <div
-          className={`h-full ${tone.bg} transition-all`}
-          style={{ width: `${g.completion}%` }}
+          className="h-full rounded-full transition-all"
+          style={{ width: `${g.completion}%`, background: tone.bar }}
         />
       </div>
-      <div className="mt-2 flex items-center justify-between text-xs">
-        <span className="text-slate-600">
-          Pending: <b className="text-slate-900">{g.pending}%</b>
-        </span>
-        <span className="text-slate-500">
-          {g.linkedIssues} linked · {g.zeroLinkRis} zero-link
-        </span>
+      <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
+        <span>Pending: <b className="text-slate-700">{g.pending}%</b></span>
+        <span>{g.linkedIssues} linked · {g.zeroLinkRis} gaps</span>
       </div>
     </div>
   );
@@ -1385,7 +1834,10 @@ function TreeNode({
     node.issuetype || TYPE_LABEL[node.type] || node.type;
 
   let completion = null;
-  if (node.type === "initiative") {
+  if (node.completionPct !== undefined && node.completionPct !== null) {
+    // Pre-computed by server (API mode) — use directly
+    completion = Math.round(node.completionPct * 10) / 10;
+  } else if (node.type === "initiative") {
     completion = calculateInitiativeCompletion(rows, node.key);
   } else if (node.type === "roadmap") {
     completion = calculateRICompletion(rows, node.key);
@@ -1484,31 +1936,25 @@ function TreeNode({
   );
 }
 
-function Metric({ title, value, icon, warn, tip }) {
+function Metric({ title, value, icon, warn, danger, tip, accent }) {
+  const color = danger ? AV.red : warn ? AV.amber : accent || AV.blue;
+  const lightBg = danger ? "#FFEBEB" : warn ? "#FEF9C3" : accent === AV.orange ? AV.orangeLight : AV.blueLight;
   return (
-    <Card className="rounded-2xl border-slate-200 shadow-sm">
-      <CardContent className="flex items-center justify-between p-4">
-        <div>
-          <div className="flex items-center gap-1.5">
-            <div className="text-xs font-medium uppercase tracking-wide text-slate-500">
-              {title}
+    <Card className="rounded-xl border-slate-200 shadow-sm overflow-hidden">
+      <div style={{ borderLeft: `4px solid ${color}` }}>
+        <CardContent className="flex items-center justify-between p-4">
+          <div>
+            <div className="flex items-center gap-1.5">
+              <div className="text-xs font-semibold uppercase tracking-wide text-slate-500">{title}</div>
+              {tip && <InfoTip title={title} side="right">{tip}</InfoTip>}
             </div>
-            {tip && (
-              <InfoTip title={title} side="right">
-                {tip}
-              </InfoTip>
-            )}
+            <div className="mt-1 text-2xl font-bold" style={{ color }}>{value}</div>
           </div>
-          <div className="mt-1 text-2xl font-bold">{value}</div>
-        </div>
-        <div
-          className={`rounded-2xl p-2 ${
-            warn ? "bg-amber-100 text-amber-700" : "bg-slate-100 text-slate-700"
-          }`}
-        >
-          {React.cloneElement(icon, { className: "h-5 w-5" })}
-        </div>
-      </CardContent>
+          <div className="rounded-xl p-2.5" style={{ background: lightBg, color }}>
+            {React.cloneElement(icon, { className: "h-5 w-5" })}
+          </div>
+        </CardContent>
+      </div>
     </Card>
   );
 }

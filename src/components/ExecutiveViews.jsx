@@ -200,26 +200,40 @@ function Progress({ value, tone = "emerald" }) {
   );
 }
 
-export function SourceBanner({ rows, uploadedFileName, loadedAt }) {
+export function SourceBanner({ rows, uploadedFileName, loadedAt, inputMode, apiData, sbrKey }) {
   const fmt = useMemo(() => {
     if (!loadedAt) return "—";
-    try {
-      return new Date(loadedAt).toLocaleString();
-    } catch {
-      return "—";
-    }
+    try { return new Date(loadedAt).toLocaleString(); } catch { return "—"; }
   }, [loadedAt]);
+
+  const sourceLabel = useMemo(() => {
+    if (inputMode === "api" && apiData) {
+      const src = apiData.repoHealth?.sourceLabel || "API";
+      return `Live API · ${src}`;
+    }
+    if (inputMode === "jira") return `Jira REST (live) · ${uploadedFileName || ""}`;
+    if (inputMode === "upload" && uploadedFileName) return `Uploaded CSV · ${uploadedFileName}`;
+    if (inputMode === "paste") return "Pasted CSV (in-browser, current session)";
+    return uploadedFileName ? `CSV · ${uploadedFileName}` : "No data loaded";
+  }, [inputMode, apiData, uploadedFileName]);
+
+  const recordCount = useMemo(() => {
+    if (inputMode === "api" && apiData) {
+      const initiatives = apiData.initiatives?.length ?? 0;
+      const ris = apiData.extractionTelemetry?.roadmapItemCount ?? 0;
+      return `${initiatives} initiative${initiatives !== 1 ? "s" : ""} · ${ris} roadmap item${ris !== 1 ? "s" : ""}`;
+    }
+    return `${rows.length} row${rows.length !== 1 ? "s" : ""}`;
+  }, [inputMode, apiData, rows]);
+
   return (
     <Card className="rounded-2xl border-slate-200 bg-slate-50 shadow-sm">
       <CardContent className="flex flex-wrap items-center justify-between gap-3 p-3 text-xs text-slate-600">
         <div className="flex items-center gap-2">
           <Database className="h-3.5 w-3.5" />
           <span className="font-semibold text-slate-700">Data source:</span>{" "}
-          {uploadedFileName ? (
-            <span className="font-mono">{uploadedFileName}</span>
-          ) : (
-            <span>pasted CSV (in-browser, current session)</span>
-          )}
+          <span>{sourceLabel}</span>
+          {sbrKey && <span className="ml-1 rounded-full bg-slate-200 px-2 py-0.5 text-slate-700 font-mono font-semibold">{sbrKey}</span>}
         </div>
         <div className="flex items-center gap-2">
           <Clock className="h-3.5 w-3.5" />
@@ -227,7 +241,7 @@ export function SourceBanner({ rows, uploadedFileName, loadedAt }) {
         </div>
         <div className="flex items-center gap-2">
           <FileSpreadsheet className="h-3.5 w-3.5" />
-          <span className="font-semibold text-slate-700">Records:</span> {rows.length}
+          <span className="font-semibold text-slate-700">Records:</span> {recordCount}
         </div>
       </CardContent>
     </Card>
@@ -264,10 +278,10 @@ export function ExecutivePortfolio({ rows }) {
       {/* TOP KPI ROW */}
       <div className="grid gap-4 md:grid-cols-3 lg:grid-cols-6">
         <ExecKPI
-          title="M&As"
+          title="Initiatives"
           value={totals.count}
           sub={`${greens} on track · ${yellows} watch · ${reds} at risk`}
-          tip="Distinct Initiatives in the loaded dataset, with their health breakdown (Green = ≥80% complete, no blockers / gaps · Yellow = ≥50% complete or limited blockers · Red = everything else)."
+          tip="Distinct Initiatives under this SBR. Health: Green = ≥80% complete, no blockers/gaps · Yellow = ≥50% complete or limited blockers · Red = everything else."
         />
         <ExecKPI
           title="Completion %"
@@ -279,13 +293,13 @@ export function ExecutivePortfolio({ rows }) {
           title="Remaining %"
           value={`${totals.avgPending}%`}
           tone={totals.avgPending >= 50 ? "rose" : "amber"}
-          tip="100 − Completion %. The share of M&A onboarding work still open across the portfolio."
+          tip="100 − Completion %. Share of work still open across the SBR portfolio."
         />
         <ExecKPI
           title="Open Gaps"
           value={totals.gaps}
           warn={totals.gaps > 0}
-          tip="Linked issues whose title contains '[GAP]' AND whose status is not yet complete. These are team-flagged onboarding gaps."
+          tip="Linked issues whose title contains '[GAP]' and whose status is not yet complete. Team-flagged coverage gaps."
         />
         <ExecKPI
           title="Open Blockers"
@@ -296,7 +310,7 @@ export function ExecutivePortfolio({ rows }) {
         <ExecKPI
           title="Open Dependencies"
           value={totals.deps}
-          tip="Active linked issues with link_type 'relates to', 'implements', 'is implemented by', 'depends on', etc. Tracks how interconnected the onboarding work is."
+          tip="Active linked issues with link_type 'relates to', 'implements', 'depends on', etc. Tracks cross-initiative dependencies."
         />
       </div>
 
@@ -304,7 +318,7 @@ export function ExecutivePortfolio({ rows }) {
       <Card className="rounded-2xl border-slate-200 shadow-sm">
         <CardContent className="p-4">
           <div className="mb-3 flex items-center gap-2">
-            <h2 className="font-semibold">M&amp;A Portfolio Health</h2>
+            <h2 className="font-semibold">SBR Portfolio Health</h2>
             <InfoTip title="One row per Initiative" side="right">
               The executive single-pane-of-glass: each Initiative with its rollup completion, what's still open at every level, blockers, dependencies, gaps, and a Green / Yellow / Red health verdict. Sorted by lowest completion first so risk floats to the top.
             </InfoTip>

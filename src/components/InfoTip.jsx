@@ -1,12 +1,6 @@
 import { useEffect, useRef, useState } from "react";
+import { createPortal } from "react-dom";
 import { Info } from "lucide-react";
-
-const placementClass = {
-  right: "right-0 top-7",
-  left: "left-0 top-7",
-  top: "right-0 bottom-7",
-  bottom: "left-0 top-7",
-};
 
 export default function InfoTip({
   children,
@@ -16,15 +10,18 @@ export default function InfoTip({
   className = "",
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useRef(null);
+  const [pos, setPos] = useState({ top: 0, left: 0 });
+  const btnRef = useRef(null);
+  const tipRef = useRef(null);
 
   useEffect(() => {
     function onDocMouseDown(e) {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+      if (
+        btnRef.current && !btnRef.current.contains(e.target) &&
+        tipRef.current && !tipRef.current.contains(e.target)
+      ) setOpen(false);
     }
-    function onEsc(e) {
-      if (e.key === "Escape") setOpen(false);
-    }
+    function onEsc(e) { if (e.key === "Escape") setOpen(false); }
     document.addEventListener("mousedown", onDocMouseDown);
     document.addEventListener("keydown", onEsc);
     return () => {
@@ -33,37 +30,62 @@ export default function InfoTip({
     };
   }, []);
 
-  const placement = placementClass[side] || placementClass.right;
+  function computePos() {
+    if (!btnRef.current) return;
+    const r = btnRef.current.getBoundingClientRect();
+    const TIP_W = 320;
+    const OFFSET = 8;
+    let left, top;
+    if (side === "left") {
+      left = Math.max(8, r.left - TIP_W - OFFSET);
+    } else {
+      left = r.right + OFFSET;
+      if (left + TIP_W > window.innerWidth - 8) left = r.left - TIP_W - OFFSET;
+    }
+    top = r.bottom + OFFSET;
+    if (top + 200 > window.innerHeight - 8) top = r.top - 200 - OFFSET;
+    setPos({ top: top + window.scrollY, left: Math.max(8, left) });
+  }
+
+  function show() { computePos(); setOpen(true); }
+  function hide() { setOpen(false); }
+
+  const tooltip = open ? createPortal(
+    <div
+      ref={tipRef}
+      role="tooltip"
+      onMouseEnter={show}
+      onMouseLeave={hide}
+      style={{ position: "absolute", top: pos.top, left: pos.left, width: 320, zIndex: 9999 }}
+      className="rounded-xl border border-slate-200 bg-white p-4 text-xs leading-relaxed text-slate-700 shadow-2xl"
+    >
+      {title && (
+        <div className="mb-1.5 text-[11px] font-semibold uppercase tracking-wide text-slate-500">
+          {title}
+        </div>
+      )}
+      {children}
+    </div>,
+    document.body
+  ) : null;
 
   return (
-    <span ref={ref} className={`relative inline-flex ${className}`}>
+    <span className={`relative inline-flex ${className}`}>
       <button
+        ref={btnRef}
         type="button"
         aria-label={label}
         aria-expanded={open}
-        onClick={(e) => {
-          e.stopPropagation();
-          setOpen((o) => !o);
-        }}
-        onMouseEnter={() => setOpen(true)}
-        onMouseLeave={() => setOpen(false)}
-        onFocus={() => setOpen(true)}
-        onBlur={() => setOpen(false)}
+        onClick={(e) => { e.stopPropagation(); open ? hide() : show(); }}
+        onMouseEnter={show}
+        onMouseLeave={hide}
+        onFocus={show}
+        onBlur={hide}
         className="inline-flex h-5 w-5 items-center justify-center rounded-full text-slate-400 transition hover:bg-slate-100 hover:text-slate-700 focus:outline-none focus:ring-2 focus:ring-sky-400"
       >
         <Info className="h-4 w-4" />
       </button>
-      {open && (
-        <div
-          role="tooltip"
-          onMouseEnter={() => setOpen(true)}
-          onMouseLeave={() => setOpen(false)}
-          className={`pointer-events-auto absolute z-50 w-72 rounded-xl border border-slate-200 bg-white p-3 text-xs leading-relaxed text-slate-700 shadow-xl ${placement}`}
-        >
-          {title && <div className="mb-1 text-[11px] font-semibold uppercase tracking-wide text-slate-500">{title}</div>}
-          {children}
-        </div>
-      )}
+      {tooltip}
     </span>
   );
 }
