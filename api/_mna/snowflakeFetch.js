@@ -9,7 +9,7 @@ const ISSUES_TABLE = `${env.snowflakeDatabase}.${env.snowflakeSchema}.ISSUES`;
 // Pre-materialized Dynamic Table — dedicated DASH_MNA schema in ENGOPERATIONS_PROD_MART.
 // Segregated from V2's PUBLIC schema. Refreshes every 15 min via Snowflake scheduler.
 // Created by: scripts/create-dynamic-table.sql
-const DYNAMIC_TABLE = `ENGOPERATIONS_PROD_MART.DASH_MNA.SBR_HIERARCHY_CACHE`;
+const DYNAMIC_TABLE = `ENGOPERATIONS_PROD_MART.PUBLIC.DASH_MNA_SBR_HIERARCHY_CACHE`;
 
 const PARENT_WALK_MAX_DEPTH = 5;
 const LINK_EXPANSION_MAX_BATCHES = 5;
@@ -121,16 +121,15 @@ async function fetchIssuesWhere(clause, binds = []) {
   return out;
 }
 
-// Fast path: query pre-materialized Dynamic Table (created by scripts/create-dynamic-table.js)
-// Returns ALL hierarchy issues in one query — no parent walk or link expansion needed.
+// ─── Fast path A: DASH_MNA_SBR_HIERARCHY_CACHE dynamic table ─────────────────
+// Full hierarchy in one query (<1s). Only available if admin created the table.
 async function fetchFromDynamicTable(sbr) {
   const sql = `SELECT ${ISSUE_COLS} FROM ${DYNAMIC_TABLE} WHERE SBR_KEY = ?`;
   const rows = await queryRows(sql, [sbr]);
   return rows.map(snowflakeRowToRawIssue).filter(Boolean).filter((i) => !EXCLUDED_KEYS.has(i.key));
 }
 
-let _dynamicTableAvailable = null; // null = unknown, true/false = cached result
-
+let _dynamicTableAvailable = null;
 async function isDynamicTableAvailable() {
   if (_dynamicTableAvailable !== null) return _dynamicTableAvailable;
   try {
@@ -140,6 +139,59 @@ async function isDynamicTableAvailable() {
     _dynamicTableAvailable = false;
   }
   return _dynamicTableAvailable;
+}
+
+// ─── Fast path B: ROADMAP_2026_TREE seed ─────────────────────────────────────
+// Uses existing V2 table (ENGOPERATIONS_PROD_MART.PUBLIC.ROADMAP_2026_TREE, 3K rows)
+// to get SBR → Init → RI keys instantly, then fetches full issue data + children
+// in targeted batches. ~5-15s vs the current 4-layer blind scan (~4 min).
+const ROADMAP_TREE_TABLE = "ENGOPERATIONS_PROD_MART.PUBLIC.ROADMAP_2026_TREE";
+let _roadmapTreeAvailable = null;
+
+async function isRoadmapTreeAvailable() {
+  if (_roadmapTreeAvailable !== null) return _roadmapTreeAvailable;
+  try {
+    await queryRows(`SELECT 1 FROM ${ROADMAP_TREE_TABLE} LIMIT 1`);
+    _roadmapTreeAvailable = true;
+  } catch {
+    _roadmapTreeAvailable = false;
+  }
+  return _roadmapTreeAvailable;
+}
+
+async function fetchFromRoadmapTree(sbr) {
+  // Step 1: Get all Init + RI keys for this SBR from the 3K-row tree table (~0.5s)
+  const treeRows = await queryRows(
+    `SELECT SBR_KEY, INIT_KEY, RI_KEY FROM ${ROADMAP_TREE_TABLE} WHERE SBR_KEY = ?`,
+    [sbr]
+  );
+  if (treeRows.length === 0) return null; // SBR not in tree — fall back
+
+  const initKeys = [...new Set(treeRows.map((r) => r.INIT_KEY).filter(Boolean))];
+  const riKeys   = [...new Set(treeRows.map((r) => r.RI_KEY).filter(Boolean))];
+  const allSeeds = [...new Set([sbr, ...initKeys, ...riKeys])].filter((k) => !EXCLUDED_KEYS.has(k));
+
+  // Step 2: Fetch full issue data for SBR + Inits + RIs in one batched query (~1-2s)
+  const seedIssues = await fetchByKeys(allSeeds);
+  const seenKeys = new Set(seedIssues.map((i) => i.key).filter(Boolean));
+
+  // Step 3: Fetch Epics (children of RIs) (~1-2s)
+  const epicIssues = await fetchByParentKeys(riKeys.filter((k) => !EXCLUDED_KEYS.has(k)));
+  const epicKeys = epicIssues.map((i) => i.key).filter((k) => k && !seenKeys.has(k));
+  epicIssues.forEach((i) => i.key && seenKeys.add(i.key));
+
+  // Step 4: Fetch Stories/Tasks (children of Epics + direct children of RIs) (~1-2s)
+  const storyParentKeys = [...new Set([...epicKeys, ...riKeys])].filter((k) => !EXCLUDED_KEYS.has(k));
+  const storyIssues = storyParentKeys.length > 0 ? await fetchByParentKeys(storyParentKeys) : [];
+  const storyKeys = storyIssues.map((i) => i.key).filter((k) => k && !seenKeys.has(k));
+  storyIssues.forEach((i) => i.key && seenKeys.add(i.key));
+
+  // Step 5: Fetch Sub-tasks (children of Stories) — optional depth
+  const subtaskIssues = storyKeys.length > 0 ? await fetchByParentKeys(storyKeys.filter((k) => !EXCLUDED_KEYS.has(k))) : [];
+
+  const all = [...seedIssues, ...epicIssues, ...storyIssues, ...subtaskIssues];
+  console.log(`[snowflake] roadmap-tree seed: ${treeRows.length} tree rows → ${all.length} issues for ${sbr}`);
+  return all;
 }
 
 async function fetchMnacSeed(sbr) {
@@ -243,7 +295,22 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
     }
   }
 
-  // Slow path: 4-layer live query
+  // Fast path B: ROADMAP_2026_TREE seed — uses existing V2 table to get SBR→Init→RI keys
+  // instantly, then fetches full issue data + children in targeted batches (~10-15s vs 4min)
+  if (await isRoadmapTreeAvailable()) {
+    try {
+      const allIssues = await fetchFromRoadmapTree(sbr);
+      if (allIssues && allIssues.length > 0) {
+        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
+      }
+      console.warn(`[snowflake] ROADMAP_2026_TREE has 0 rows for ${sbr}, falling back to 4-layer scan`);
+    } catch (treeErr) {
+      _roadmapTreeAvailable = false;
+      console.warn(`[snowflake] ROADMAP_2026_TREE seed failed: ${treeErr.message}`);
+    }
+  }
+
+  // Slow path: 4-layer live query (full blind scan — fallback only)
   const parentsRaw = await fetchMnacSeed(sbr);
   const seenKeys = new Set();
   for (const issue of parentsRaw) if (issue.key) seenKeys.add(issue.key);
@@ -256,10 +323,15 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
 }
 
 async function probeMnacIssueCount(sbr = "SBR-356") {
-  // Use Dynamic Table for health check if available (much faster)
   if (await isDynamicTableAvailable()) {
     try {
       const rows = await queryRows(`SELECT COUNT(*) AS C FROM ${DYNAMIC_TABLE} WHERE SBR_KEY = ?`, [sbr]);
+      return Number(rows[0]?.C ?? 0);
+    } catch { /* fall through */ }
+  }
+  if (await isRoadmapTreeAvailable()) {
+    try {
+      const rows = await queryRows(`SELECT COUNT(*) AS C FROM ${ROADMAP_TREE_TABLE} WHERE SBR_KEY = ?`, [sbr]);
       return Number(rows[0]?.C ?? 0);
     } catch { /* fall through */ }
   }
