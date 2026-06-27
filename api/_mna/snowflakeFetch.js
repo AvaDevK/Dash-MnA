@@ -194,9 +194,111 @@ async function fetchFromRoadmapTree(sbr) {
   return all;
 }
 
+// Single-query full hierarchy fetch using server-side CTEs.
+// Instead of 8-13 serial round-trips, one query resolves the full hierarchy in Snowflake.
+// For SBR-356: uses MNAC project filter (same as V2).
+// For any SBR:  uses parent-key JOIN pattern (same as the dynamic table DDL).
+async function fetchAllInOneQuery(sbr) {
+  const T = ISSUES_TABLE;
+  let sql;
+
+  if (sbr === "SBR-356") {
+    // Mirror V2 exactly: project = MNAC gets all MNAC issues (Initiatives + RIs).
+    // Then fetch Epics (children of RIs across any project) and Stories via CTEs.
+    sql = `
+      WITH
+      mnac AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"project":"key"::STRING = 'MNAC'
+          AND KEY != 'MNAC-90'
+      ),
+      ri_keys AS (
+        SELECT KEY FROM mnac
+        WHERE COALESCE(ISSUE_TYPE, FIELDS:"issuetype":"name"::STRING) = 'Roadmap Item'
+      ),
+      epics AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM ri_keys)
+          AND FIELDS:"issuetype":"name"::STRING = 'Epic'
+      ),
+      epic_keys AS (SELECT KEY FROM epics),
+      stories AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM epic_keys)
+          AND FIELDS:"issuetype":"name"::STRING IN ('Story', 'Task', 'Bug', 'Sub-task')
+      ),
+      stories_direct AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM ri_keys)
+          AND FIELDS:"issuetype":"name"::STRING IN ('Story', 'Task', 'Bug')
+      )
+      SELECT * FROM mnac
+      UNION ALL SELECT * FROM epics
+      UNION ALL SELECT * FROM stories
+      UNION ALL SELECT * FROM stories_direct
+    `;
+  } else {
+    // Generic SBR: mirror the dynamic table DDL as an inline CTE
+    sql = `
+      WITH
+      l1 AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING = '${sbr}'
+          AND FIELDS:"issuetype":"name"::STRING = 'Initiative'
+      ),
+      l2 AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM l1)
+          AND FIELDS:"issuetype":"name"::STRING = 'Roadmap Item'
+      ),
+      l3 AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM l2)
+          AND FIELDS:"issuetype":"name"::STRING = 'Epic'
+      ),
+      l4a AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM l3)
+          AND FIELDS:"issuetype":"name"::STRING IN ('Story', 'Task', 'Bug')
+      ),
+      l4b AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM l2)
+          AND FIELDS:"issuetype":"name"::STRING IN ('Story', 'Task', 'Bug')
+      ),
+      l5 AS (
+        ${ISSUE_SELECT}
+        WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM l4a UNION SELECT KEY FROM l4b)
+          AND FIELDS:"issuetype":"name"::STRING = 'Sub-task'
+      ),
+      sbr_issue AS (
+        ${ISSUE_SELECT}
+        WHERE KEY = '${sbr}'
+      )
+      SELECT * FROM sbr_issue
+      UNION ALL SELECT * FROM l1
+      UNION ALL SELECT * FROM l2
+      UNION ALL SELECT * FROM l3
+      UNION ALL SELECT * FROM l4a
+      UNION ALL SELECT * FROM l4b
+      UNION ALL SELECT * FROM l5
+    `;
+  }
+
+  const rows = await queryRows(sql);
+  const seen = new Set();
+  const out = [];
+  for (const row of rows) {
+    const issue = snowflakeRowToRawIssue(row);
+    if (!issue?.key || seen.has(issue.key) || EXCLUDED_KEYS.has(issue.key)) continue;
+    seen.add(issue.key);
+    out.push(issue);
+  }
+  console.log(`[snowflake] single-query CTE: ${out.length} issues for ${sbr}`);
+  return out;
+}
+
 async function fetchMnacSeed(sbr) {
-  // For SBR-356 (MNAC project), mirror V2's faster project-key filter.
-  // For other SBRs, fall back to parent-key traversal.
   if (sbr === "SBR-356") {
     return fetchIssuesWhere(`FIELDS:"project":"key"::STRING = 'MNAC' AND KEY != 'MNAC-90'`);
   }
@@ -301,21 +403,31 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
   }
 
   // Fast path B: ROADMAP_2026_TREE seed — uses existing V2 table to get SBR→Init→RI keys
-  // instantly, then fetches full issue data + children in targeted batches (~10-15s vs 4min)
   if (await isRoadmapTreeAvailable()) {
     try {
       const allIssues = await fetchFromRoadmapTree(sbr);
       if (allIssues && allIssues.length > 0) {
         return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
       }
-      console.warn(`[snowflake] ROADMAP_2026_TREE has 0 rows for ${sbr}, falling back to 4-layer scan`);
     } catch (treeErr) {
       _roadmapTreeAvailable = false;
       console.warn(`[snowflake] ROADMAP_2026_TREE seed failed: ${treeErr.message}`);
     }
   }
 
-  // Slow path: 4-layer live query (full blind scan — fallback only)
+  // Fast path C: single CTE query — resolves full hierarchy server-side in one round-trip.
+  // Eliminates 8-13 serial queries (each with Snowflake connection overhead).
+  // Falls back to 4-layer scan only if this fails.
+  try {
+    const allIssues = await fetchAllInOneQuery(sbr);
+    if (allIssues.length > 0) {
+      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
+    }
+  } catch (cteErr) {
+    console.warn(`[snowflake] single-query CTE failed: ${cteErr.message}, falling back to 4-layer scan`);
+  }
+
+  // Slow path: 4-layer serial scan (last resort)
   const parentsRaw = await fetchMnacSeed(sbr);
   const seenKeys = new Set();
   for (const issue of parentsRaw) if (issue.key) seenKeys.add(issue.key);
