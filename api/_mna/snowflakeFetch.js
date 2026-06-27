@@ -209,6 +209,30 @@ async function fetchAllInOneQuery(sbr) {
   const T = ISSUES_TABLE;
   let sql;
 
+  // Shared CTE fragment: extracts linked issue keys from a set of hierarchy keys
+  // using LATERAL FLATTEN on the FIELDS:"issuelinks" variant array.
+  // Returns distinct linked keys that are NOT already in the hierarchy.
+  const LINK_TARGETS_CTE = (hierKeysCteName) => `
+      link_targets AS (
+        SELECT DISTINCT v.value:"outwardIssue":"key"::STRING AS LK
+        FROM ${T} i
+        JOIN ${hierKeysCteName} h ON i.KEY = h.KEY,
+        LATERAL FLATTEN(input => i.FIELDS:"issuelinks") v
+        WHERE v.value:"outwardIssue":"key"::STRING IS NOT NULL
+          AND v.value:"outwardIssue":"key"::STRING NOT IN (SELECT KEY FROM ${hierKeysCteName})
+        UNION
+        SELECT DISTINCT v.value:"inwardIssue":"key"::STRING
+        FROM ${T} i
+        JOIN ${hierKeysCteName} h ON i.KEY = h.KEY,
+        LATERAL FLATTEN(input => i.FIELDS:"issuelinks") v
+        WHERE v.value:"inwardIssue":"key"::STRING IS NOT NULL
+          AND v.value:"inwardIssue":"key"::STRING NOT IN (SELECT KEY FROM ${hierKeysCteName})
+      ),
+      linked_issues AS (
+        ${ISSUE_SELECT}
+        WHERE KEY IN (SELECT LK FROM link_targets WHERE LK IS NOT NULL)
+      )`;
+
   if (sbr === "SBR-356") {
     // Mirror V2 exactly: project = MNAC gets all MNAC issues (Initiatives + RIs).
     // Then fetch Epics (children of RIs across any project) and Stories via CTEs.
@@ -238,11 +262,19 @@ async function fetchAllInOneQuery(sbr) {
         ${ISSUE_SELECT}
         WHERE FIELDS:"parent":"key"::STRING IN (SELECT KEY FROM ri_keys)
           AND FIELDS:"issuetype":"name"::STRING IN ('Story', 'Task', 'Bug')
-      )
+      ),
+      hier_keys AS (
+        SELECT KEY FROM mnac
+        UNION ALL SELECT KEY FROM epics
+        UNION ALL SELECT KEY FROM stories
+        UNION ALL SELECT KEY FROM stories_direct
+      ),
+      ${LINK_TARGETS_CTE("hier_keys")}
       SELECT * FROM mnac
       UNION ALL SELECT * FROM epics
       UNION ALL SELECT * FROM stories
       UNION ALL SELECT * FROM stories_direct
+      UNION ALL SELECT * FROM linked_issues
     `;
   } else {
     // Generic SBR: mirror the dynamic table DDL as an inline CTE
@@ -281,7 +313,17 @@ async function fetchAllInOneQuery(sbr) {
       sbr_issue AS (
         ${ISSUE_SELECT}
         WHERE KEY = '${sbr}'
-      )
+      ),
+      hier_keys AS (
+        SELECT KEY FROM sbr_issue
+        UNION ALL SELECT KEY FROM l1
+        UNION ALL SELECT KEY FROM l2
+        UNION ALL SELECT KEY FROM l3
+        UNION ALL SELECT KEY FROM l4a
+        UNION ALL SELECT KEY FROM l4b
+        UNION ALL SELECT KEY FROM l5
+      ),
+      ${LINK_TARGETS_CTE("hier_keys")}
       SELECT * FROM sbr_issue
       UNION ALL SELECT * FROM l1
       UNION ALL SELECT * FROM l2
@@ -289,6 +331,7 @@ async function fetchAllInOneQuery(sbr) {
       UNION ALL SELECT * FROM l4a
       UNION ALL SELECT * FROM l4b
       UNION ALL SELECT * FROM l5
+      UNION ALL SELECT * FROM linked_issues
     `;
   }
 
@@ -415,10 +458,10 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
   try {
     const allIssues = await fetchAllInOneQuery(sbr);
     if (allIssues.length > 0) {
-      const seenKeys = new Set(allIssues.map((i) => i.key).filter(Boolean));
-      const expandedRaw = await fetchLinkExpansion([allIssues], seenKeys);
-      console.log(`[snowflake] CTE: ${allIssues.length} hierarchy + ${expandedRaw.length} linked issues for ${sbr}`);
-      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw };
+      // Linked issues are included in the CTE result (via LATERAL FLATTEN on issuelinks).
+      // No extra round-trips needed — return all as parentsRaw.
+      console.log(`[snowflake] CTE: ${allIssues.length} total issues (hierarchy + linked) for ${sbr}`);
+      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
     }
   } catch (cteErr) {
     console.warn(`[snowflake] single-query CTE failed: ${cteErr.message}, falling back to 4-layer scan`);
