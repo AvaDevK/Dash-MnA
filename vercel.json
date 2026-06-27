@@ -6,5 +6,16 @@
   "installCommand": "npm install",
   "github": {
     "silent": true
+  },
+  "crons": [
+    {
+      "path": "/api/warm",
+      "schedule": "*/5 * * * *"
+    }
+  ],
+  "functions": {
+    "api/mna.js":        { "maxDuration": 60 },
+    "api/warm.js":       { "maxDuration": 60 },
+    "api/jira-export.js": { "maxDuration": 60 }
   }
 }

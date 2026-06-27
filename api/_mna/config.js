@@ -18,7 +18,7 @@ const env = {
   mnaDataSource: (process.env.MNA_DATA_SOURCE || "auto").trim().toLowerCase(),
   mnaNameCustomFieldId: (process.env.MNA_NAME_CUSTOM_FIELD_ID || "").trim(),
   mnaRiCustomFieldId: (process.env.MNA_RI_CUSTOM_FIELD_ID || "").trim(),
-  mnaCacheTtlMs: Number(process.env.MNA_CACHE_TTL_MS) > 0 ? Number(process.env.MNA_CACHE_TTL_MS) : 300_000,
+  mnaCacheTtlMs: Number(process.env.MNA_CACHE_TTL_MS) > 0 ? Number(process.env.MNA_CACHE_TTL_MS) : 900_000, // 15 min default
 };
 
 module.exports = { env };

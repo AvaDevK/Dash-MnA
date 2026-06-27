@@ -201,6 +201,43 @@ async function buildUniverse(sbr = "SBR-356") {
 }
 
 
+// Background pre-warm: after serving a cold SBR, quietly fetch the next 3 from
+// the SBR list that aren't already in cache. Sequential with 2s gaps to avoid
+// overwhelming the Snowflake warehouse.
+const _JIRA_BASE = process.env.JIRA_BASE_URL || "https://avalara.atlassian.net";
+let _sbrListCache = null;
+let _sbrListAt = 0;
+
+async function _getSbrList() {
+  const now = Date.now();
+  if (_sbrListCache && now - _sbrListAt < 30 * 60 * 1000) return _sbrListCache;
+  try {
+    const auth = Buffer.from(`${process.env.JIRA_EMAIL}:${process.env.JIRA_API_TOKEN}`).toString("base64");
+    const resp = await fetch(`${_JIRA_BASE}/rest/api/3/search/jql`, {
+      method: "POST",
+      headers: { Authorization: `Basic ${auth}`, "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify({ jql: `issueKey ~ "SBR*" AND "Big Rocks to Succeed" IS NOT EMPTY AND statusCategory != Done ORDER BY created DESC`, fields: ["summary"], maxResults: 20 }),
+    });
+    if (!resp.ok) return [];
+    const data = await resp.json();
+    _sbrListCache = (data.issues || []).map((i) => i.key);
+    _sbrListAt = now;
+    return _sbrListCache;
+  } catch { return []; }
+}
+
+async function _warmSiblings(currentSbr) {
+  const list = await _getSbrList();
+  const candidates = list.filter((k) => k !== currentSbr && !_cache.has(k)).slice(0, 3);
+  for (const sbr of candidates) {
+    await new Promise((r) => setTimeout(r, 2000)); // 2s gap between fetches
+    if (!_cache.has(sbr) && !_inflight.has(sbr)) {
+      console.log(`[warm] pre-warming ${sbr}`);
+      _buildAndStore(sbr, cacheKey(sbr), Math.floor(env.mnaCacheTtlMs / 1000)).catch(() => {});
+    }
+  }
+}
+
 function withTimeout(promise, ms, label) {
   return Promise.race([
     promise,
@@ -254,7 +291,17 @@ module.exports = async function handler(req, res) {
     res.setHeader("X-Mna-Repo-Ok", String(Boolean(universe.repoHealth?.ok)));
     if (ageSeconds !== null) res.setHeader("X-Cache-Age", String(ageSeconds));
     res.setHeader("Cache-Control", "no-store");
-    return res.status(200).json(payload);
+    res.status(200).json(payload);
+
+    // After responding, background-warm sibling SBRs that aren't cached yet.
+    // Fire-and-forget: errors are swallowed, no effect on the user response.
+    if (!fromCache) {
+      const siblings = (universe.filterOptions?.mnaNames || [])
+        .slice(0, 3)
+        .map(() => null); // placeholder — we warm from SBR list instead
+      _warmSiblings(filters.sbr).catch(() => {});
+    }
+    return;
   } catch (err) {
     const message = err instanceof Error ? err.message : String(err);
     return res.status(503).json({ error: "MNA fetch failed", reason: message });

@@ -792,6 +792,22 @@ export default function MnaRiLinkedIssueDashboard() {
       setApiData(data);
       setApiLastPulled(Date.now());
       setLoadedAt(Date.now());
+
+      // After a cold miss, silently pre-warm the next 3 SBRs from the list
+      // so switching to them feels instant. Fire-and-forget, low priority.
+      if (data.cacheStatus === "MISS") {
+        fetch("/api/sbr-list")
+          .then((r) => r.json())
+          .then(({ sbrs = [] }) => {
+            const others = sbrs.filter((s) => s.key !== sbr).slice(0, 3);
+            for (let i = 0; i < others.length; i++) {
+              setTimeout(() => {
+                fetch(`/api/mna?sbr=${others[i].key}`, { priority: "low" }).catch(() => {});
+              }, (i + 1) * 3000); // stagger: 3s, 6s, 9s
+            }
+          })
+          .catch(() => {});
+      }
     } catch (err) {
       setApiError(err.message || String(err));
     } finally {
