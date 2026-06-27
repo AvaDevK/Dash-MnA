@@ -458,34 +458,6 @@ export default function MnaRiLinkedIssueDashboard() {
     );
   }, [initiativeSummaries]);
 
-  const filteredParents = useMemo(() => {
-    return parents.filter((p) => {
-      const q = search.toLowerCase();
-      const searchable = `${p.parent_key} ${p.parent_title} ${p.parent_status} ${p.links
-        .map(
-          (l) =>
-            `${l.linked_key} ${l.linked_title} ${l.linked_status} ${l.link_type}`,
-        )
-        .join(" ")}`.toLowerCase();
-      const matchesSearch = !q || searchable.includes(q);
-      const matchesMna = mnaFilter === "all" || p.mna === mnaFilter;
-      const matchesRi = riFilter === "all" || p.ri === riFilter;
-      const hasBlocker = p.links.some((l) =>
-        (l.link_type || "").toLowerCase().includes("block"),
-      );
-      const zeroLinks = p.links.length === 0;
-      const hasGap = p.links.some((l) =>
-        /\[gap\]|gap/i.test(l.linked_title || ""),
-      );
-      const matchesRisk =
-        riskFilter === "all" ||
-        (riskFilter === "blocked" && hasBlocker) ||
-        (riskFilter === "zero" && zeroLinks) ||
-        (riskFilter === "gap" && hasGap);
-      return matchesSearch && matchesMna && matchesRi && matchesRisk;
-    });
-  }, [parents, search, mnaFilter, riFilter, riskFilter]);
-
   // Must be declared before any useMemo that references it in deps or body
   const isApiMode = inputMode === "api" && !!apiData;
 
@@ -570,6 +542,53 @@ export default function MnaRiLinkedIssueDashboard() {
     if (selectedMnas.size === 0) return base;
     return base.filter((r) => selectedMnas.has(r.initiative_title || getInitiative(r)));
   }, [isApiMode, apiData, rows, selectedMnas]);
+
+  const apiParents = useMemo(() => {
+    if (!isApiMode) return [];
+    const map = new Map();
+    effectiveRows.forEach((r) => {
+      const parentKey = getParentKey(r);
+      const parentTitle = getParentTitle(r);
+      if (!parentKey) return;
+      if (!map.has(parentKey)) {
+        map.set(parentKey, {
+          parent_key: parentKey,
+          parent_title: parentTitle,
+          parent_status: getParentStatus(r),
+          mna: getInitiative(r),
+          initiativeKey: getInitiativeKey(r),
+          ri: getRI(parentTitle),
+          links: [],
+        });
+      }
+      const linkType = (r.link_type || "").toUpperCase().trim();
+      if (r.linked_key && linkType !== "NO LINKS") {
+        map.get(parentKey).links.push(r);
+      }
+    });
+    return Array.from(map.values());
+  }, [isApiMode, effectiveRows]);
+
+  const filteredParents = useMemo(() => {
+    return (isApiMode ? apiParents : parents).filter((p) => {
+      const q = search.toLowerCase();
+      const searchable = `${p.parent_key} ${p.parent_title} ${p.parent_status} ${p.links
+        .map((l) => `${l.linked_key} ${l.linked_title} ${l.linked_status} ${l.link_type}`)
+        .join(" ")}`.toLowerCase();
+      const matchesSearch = !q || searchable.includes(q);
+      const matchesMna = mnaFilter === "all" || p.mna === mnaFilter;
+      const matchesRi = riFilter === "all" || p.ri === riFilter;
+      const hasBlocker = p.links.some((l) => (l.link_type || "").toLowerCase().includes("block"));
+      const zeroLinks = p.links.length === 0;
+      const hasGap = p.links.some((l) => /\[gap\]|gap/i.test(l.linked_title || ""));
+      const matchesRisk =
+        riskFilter === "all" ||
+        (riskFilter === "blocked" && hasBlocker) ||
+        (riskFilter === "zero" && zeroLinks) ||
+        (riskFilter === "gap" && hasGap);
+      return matchesSearch && matchesMna && matchesRi && matchesRisk;
+    });
+  }, [isApiMode, apiParents, parents, search, mnaFilter, riFilter, riskFilter]);
 
   const apiMnas = useMemo(() => {
     if (!isApiMode) return [];
@@ -1556,45 +1575,59 @@ export default function MnaRiLinkedIssueDashboard() {
 function InitiativeCard({ g }) {
   const tone = completionTone(g.completion);
   const eol = g.isEndOfLife;
-  const barColor = eol ? "#9CA3AF" : tone.bar;
-  const borderLeftColor = eol ? "#C00000" : tone.bar;
-  const cardStyle = eol
-    ? { borderLeft: `4px solid #C00000`, borderColor: "#C00000", background: "#F9FAFB" }
-    : { borderLeft: `4px solid ${borderLeftColor}` };
+  const ringColor = eol ? "#9CA3AF" : tone.bar;
+  const circumference = 125.7;
+  const filled = (g.completion / 100) * circumference;
+
   return (
     <div
-      className={`relative rounded-xl border p-4 shadow-sm overflow-hidden ${eol ? "border-red-700" : "bg-white"}`}
-      style={cardStyle}
+      className={`relative flex flex-col gap-3 rounded-2xl border p-4 shadow-sm transition-shadow hover:shadow-md ${eol ? "border-red-600 bg-red-50/40" : "border-slate-200 bg-white"}`}
+      style={eol ? {} : { borderLeft: `4px solid ${tone.bar}` }}
     >
-      <div className="mb-2 flex items-start justify-between gap-2">
-        <div>
-          <div className={`text-sm font-bold ${eol ? "text-slate-500" : "text-slate-900"}`}>{g.name}</div>
-          <div className="text-[11px] text-slate-400 mt-0.5">
-            {g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}
-          </div>
+      {/* Header: name + donut ring */}
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0 flex-1">
+          {eol && (
+            <span className="mb-1 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#FEE2E2", color: "#C00000" }}>
+              ⊘ {g.lifecycleLabel || "End of Life / Retired"}
+            </span>
+          )}
+          <div className={`text-sm font-bold leading-snug ${eol ? "text-slate-400" : "text-slate-900"}`}>{g.name}</div>
+          <div className="mt-0.5 text-[11px] text-slate-400">{g.key} · {g.riCount} RI{g.riCount === 1 ? "" : "s"}</div>
         </div>
-        <InfoTip title={`${g.name} rollup`} side="left">
-          Completion is the avg of this Initiative's {g.riCount} RI{g.riCount === 1 ? "" : "s"}. Done/Closed/Resolved count as complete.
-        </InfoTip>
+        {/* Donut ring */}
+        <svg width="52" height="52" viewBox="0 0 48 48" className="flex-shrink-0">
+          <circle cx="24" cy="24" r="20" fill="none" stroke="#E2E8F0" strokeWidth="4" />
+          <circle
+            cx="24" cy="24" r="20" fill="none"
+            stroke={ringColor}
+            strokeWidth="4"
+            strokeDasharray={`${filled} ${circumference}`}
+            strokeLinecap="round"
+            transform="rotate(-90 24 24)"
+          />
+          <text x="24" y="27" textAnchor="middle" fontSize="10" fontWeight="bold" fill={eol ? "#9CA3AF" : tone.bar}>{g.completion}%</text>
+        </svg>
       </div>
-      {eol && (
-        <div className="mb-2 inline-flex items-center gap-1 rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide" style={{ background: "#FEE2E2", color: "#C00000" }}>
-          ⊘ {g.lifecycleLabel || "End of Life / Retired"}
-        </div>
-      )}
-      <div className="flex items-baseline gap-1.5">
-        <span className={`text-3xl font-bold ${eol ? "text-slate-400" : tone.text}`}>{g.completion}%</span>
-        <span className="text-xs text-slate-400">complete</span>
+
+      {/* Progress bar */}
+      <div className="h-2 w-full overflow-hidden rounded-full bg-slate-100">
+        <div className="h-full rounded-full transition-all" style={{ width: `${g.completion}%`, background: ringColor }} />
       </div>
-      <div className="mt-2 h-1.5 w-full overflow-hidden rounded-full bg-slate-200">
-        <div
-          className="h-full rounded-full transition-all"
-          style={{ width: `${g.completion}%`, background: barColor }}
-        />
-      </div>
-      <div className="mt-2 flex items-center justify-between text-xs text-slate-500">
-        <span>Pending: <b className={eol ? "text-slate-400" : "text-slate-700"}>{g.pending}%</b></span>
-        <span>{g.linkedIssues} linked · {g.zeroLinkRis} gaps</span>
+
+      {/* Stats row */}
+      <div className="flex items-center justify-between text-[11px] text-slate-500">
+        <span className="flex items-center gap-1">
+          <span className="font-semibold text-slate-700">{g.pending}%</span> pending
+        </span>
+        <span className="flex items-center gap-2">
+          <span title="Linked issues">{g.linkedIssues} linked</span>
+          {g.zeroLinkRis > 0 && (
+            <span className="rounded px-1 py-0.5 text-[10px] font-semibold" style={{ background: "#FEF3C7", color: "#92400E" }}>
+              {g.zeroLinkRis} gap{g.zeroLinkRis === 1 ? "" : "s"}
+            </span>
+          )}
+        </span>
       </div>
     </div>
   );
