@@ -361,6 +361,7 @@ export default function MnaRiLinkedIssueDashboard() {
   const [expandedSections, setExpandedSections] = useState({ initiatives: false, flatLinks: false, hierarchy: false });
   const toggleSection = (key) => setExpandedSections((s) => ({ ...s, [key]: !s[key] }));
   const filterBarRef = useRef(null);
+  const hierarchyCardRef = useRef(null);
   const [showBackBtn, setShowBackBtn] = useState(false);
 
   const rows = useMemo(() => parseCSV(csvText), [csvText]);
@@ -389,6 +390,14 @@ export default function MnaRiLinkedIssueDashboard() {
   };
   const selectAllMnas = () => setSelectedMnas(new Set());
   const isMnaActive = (m) => selectedMnas.size === 0 || selectedMnas.has(m);
+
+  const navigateToHierarchy = useCallback((name) => {
+    setActiveTab("overview");
+    setViewMode("hierarchy");
+    if (name) setSelectedMnas(new Set([name]));
+    // Scroll hierarchy card into view after React re-renders
+    setTimeout(() => hierarchyCardRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 80);
+  }, []);
 
   const parents = useMemo(() => {
     const map = new Map();
@@ -1265,9 +1274,16 @@ export default function MnaRiLinkedIssueDashboard() {
                   <TrendingUp className="h-3.5 w-3.5" /> {isApiMode ? `Rollup from ${apiData?.repoHealth?.sourceLabel ?? "API"}` : "Rollup from Jira status"}
                 </div>
                 <button
-                  onClick={() => toggleSection("initiatives")}
+                  onClick={() => {
+                    if (expandedSections.initiatives) {
+                      toggleSection("initiatives");
+                    } else {
+                      selectAllMnas();          // clear any initiative filter so all cards show
+                      toggleSection("initiatives");
+                    }
+                  }}
                   className="flex items-center gap-1 rounded-full border border-slate-200 bg-white px-2.5 py-1 text-[11px] font-medium text-slate-600 shadow-sm hover:bg-slate-50 transition"
-                  title={expandedSections.initiatives ? "Collapse" : "Expand all cards"}
+                  title={expandedSections.initiatives ? "Collapse" : "Show all initiatives"}
                 >
                   {expandedSections.initiatives ? <><Minimize2 className="h-3 w-3" /> Collapse</> : <><Maximize2 className="h-3 w-3" /> Show All</>}
                 </button>
@@ -1275,7 +1291,7 @@ export default function MnaRiLinkedIssueDashboard() {
             </div>
             <div className={`grid gap-3 sm:grid-cols-2 ${expandedSections.initiatives ? "lg:grid-cols-4 xl:grid-cols-5" : "lg:grid-cols-3 xl:grid-cols-4"}`}>
               {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).map((g) => (
-                <InitiativeCard key={g.key} g={g} onNavigate={(name) => { setActiveTab("overview"); setViewMode("hierarchy"); if (name) setSelectedMnas(new Set([name])); }} />
+                <InitiativeCard key={g.key} g={g} onNavigate={navigateToHierarchy} />
               ))}
               {(isApiMode ? apiInitiativeSummaries : initiativeSummaries).length === 0 && (
                 <div className="col-span-full rounded-xl border border-dashed border-slate-200 p-6 text-center text-sm text-slate-500">
@@ -1308,7 +1324,7 @@ export default function MnaRiLinkedIssueDashboard() {
                     data={isApiMode ? apiMnaChart : mnaChart}
                     margin={{ top: 8, right: 12, left: 0, bottom: 48 }}
                     style={{ cursor: "pointer" }}
-                    onClick={(data) => { if (data?.activePayload?.[0]?.payload?.name) { setActiveTab("overview"); setViewMode("hierarchy"); setSelectedMnas(new Set([data.activePayload[0].payload.name])); } }}
+                    onClick={(data) => { if (data?.activePayload?.[0]?.payload?.name) navigateToHierarchy(data.activePayload[0].payload.name); }}
                   >
                     <XAxis
                       dataKey="name"
@@ -1455,7 +1471,7 @@ export default function MnaRiLinkedIssueDashboard() {
           </CardContent>
         </Card>
 
-        <Card className="rounded-2xl border-slate-200 shadow-sm">
+        <Card ref={hierarchyCardRef} className="rounded-2xl border-slate-200 shadow-sm">
           <CardContent className="p-4">
             <div className="mb-4 flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
               <div className="flex items-center gap-2">
