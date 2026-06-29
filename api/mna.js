@@ -146,7 +146,7 @@ async function buildUniverse(sbr = "SBR-356") {
 
   if (source === "snowflake") {
     if (!hasSnowflakeCredentials()) throw new Error("Snowflake credentials not configured");
-    layers = await withTimeout(fetchAllMnacIssuesFromSnowflake(sbr), 90_000, "Snowflake MNAC fetch");
+    layers = await withTimeout(fetchAllMnacIssuesFromSnowflake(sbr), 55_000, "Snowflake MNAC fetch");
     repoHealth = { ok: true, sourceLabel: `snowflake · ${sbr}`, lastFetchedAt: new Date().toISOString() };
   } else if (source === "jira") {
     if (!hasJiraCredentials()) throw new Error("JIRA_EMAIL or JIRA_API_TOKEN is not set");
@@ -156,7 +156,7 @@ async function buildUniverse(sbr = "SBR-356") {
     // auto: try Snowflake directly (no probe round-trip), fall back to Jira on any error
     if (hasSnowflakeCredentials()) {
       try {
-        layers = await withTimeout(fetchAllMnacIssuesFromSnowflake(sbr), 90_000, "Snowflake MNAC fetch");
+        layers = await withTimeout(fetchAllMnacIssuesFromSnowflake(sbr), 55_000, "Snowflake MNAC fetch");
         repoHealth = { ok: true, sourceLabel: `snowflake · ${sbr}`, lastFetchedAt: new Date().toISOString() };
       } catch (snowErr) {
         const reason = snowErr instanceof Error ? snowErr.message : String(snowErr);
