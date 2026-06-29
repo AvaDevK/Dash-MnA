@@ -441,13 +441,11 @@ async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
       const allIssues = await fetchFromDynamicTable(sbr);
       timing.dynamicTableMs = Date.now() - t0;
       if (allIssues.length > 0) {
-        console.log(`[snowflake] Dynamic Table: ${allIssues.length} issues in ${timing.dynamicTableMs}ms`);
-        const seenKeys = new Set(allIssues.map((i) => i.key).filter(Boolean));
-        const expandedRaw = await fetchLinkExpansion([allIssues], seenKeys);
-        timing.linkExpansionMs = Date.now() - t0 - timing.dynamicTableMs;
         timing.totalMs = Date.now() - t0;
         timing.path = "dynamic-table";
-        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw, timing };
+        console.log(`[snowflake] Dynamic Table: ${allIssues.length} issues in ${timing.totalMs}ms`);
+        // ISSUE_LINKS_RAW already captured in each row — no fetchLinkExpansion needed.
+        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [], timing };
       }
       console.warn(`[snowflake] Dynamic Table: 0 rows for ${sbr}, falling back to CTE`);
     } catch (dtErr) {
