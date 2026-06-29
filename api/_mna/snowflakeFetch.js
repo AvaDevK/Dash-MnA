@@ -128,15 +128,12 @@ async function fetchFromDynamicTable(sbr) {
   return rows.map(snowflakeRowToRawIssue).filter(Boolean).filter((i) => !EXCLUDED_KEYS.has(i.key));
 }
 
-let _dynamicTableAvailable = null;
+// Dynamic Table fast path is only beneficial when the object is a TRUE pre-materialized
+// Dynamic Table (not a regular VIEW). A view re-runs the full JOIN every query, giving
+// the same cost as the CTE but with fetchLinkExpansion added on top (2-3x slower).
+// Set to false until a real Dynamic Table is provisioned in PROD.
+let _dynamicTableAvailable = false;
 async function isDynamicTableAvailable() {
-  if (_dynamicTableAvailable !== null) return _dynamicTableAvailable;
-  try {
-    await queryRows(`SELECT 1 FROM ${DYNAMIC_TABLE} LIMIT 1`);
-    _dynamicTableAvailable = true;
-  } catch {
-    _dynamicTableAvailable = false;
-  }
   return _dynamicTableAvailable;
 }
 
@@ -433,49 +430,69 @@ async function fetchLinkExpansion(fetchedLayers, seenKeys) {
 async function fetchAllMnacIssuesFromSnowflake(sbr = "SBR-356") {
   if (!hasSnowflakeCredentials()) throw new Error("Snowflake credentials are not configured");
 
-  // Fast path: Dynamic Table pre-materializes the full hierarchy in one query (<1s)
+  const t0 = Date.now();
+  const timing = {};
+
+  // Fast path: Dynamic Table — only active when a TRUE pre-materialized Dynamic Table exists.
+  // A regular VIEW is disabled here (same query cost as CTE + fetchLinkExpansion overhead).
   if (await isDynamicTableAvailable()) {
     try {
       const allIssues = await fetchFromDynamicTable(sbr);
+      timing.dynamicTableMs = Date.now() - t0;
       if (allIssues.length > 0) {
-        console.log(`[snowflake] Dynamic Table hit: ${allIssues.length} issues for ${sbr}`);
+        console.log(`[snowflake] Dynamic Table: ${allIssues.length} issues in ${timing.dynamicTableMs}ms`);
         const seenKeys = new Set(allIssues.map((i) => i.key).filter(Boolean));
         const expandedRaw = await fetchLinkExpansion([allIssues], seenKeys);
-        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw };
+        timing.linkExpansionMs = Date.now() - t0 - timing.dynamicTableMs;
+        timing.totalMs = Date.now() - t0;
+        timing.path = "dynamic-table";
+        return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw, timing };
       }
-      // Table exists but no rows for this SBR — fall through to live query
-      console.warn(`[snowflake] Dynamic Table has 0 rows for ${sbr}, falling back to live query`);
+      console.warn(`[snowflake] Dynamic Table: 0 rows for ${sbr}, falling back to CTE`);
     } catch (dtErr) {
-      _dynamicTableAvailable = false; // mark as unavailable so we don't retry
-      console.warn(`[snowflake] Dynamic Table query failed: ${dtErr.message}`);
+      _dynamicTableAvailable = false;
+      console.warn(`[snowflake] Dynamic Table failed: ${dtErr.message}`);
     }
   }
 
-  // Fast path C: single CTE query — resolves full hierarchy server-side in one round-trip.
-  // Eliminates 8-13 serial queries (each with Snowflake connection overhead).
-  // Falls back to 4-layer scan only if this fails.
+  // CTE path: single query resolves full hierarchy + linked issues via LATERAL FLATTEN.
+  // One Snowflake round-trip — no fetchLinkExpansion needed.
   try {
+    const t1 = Date.now();
     const allIssues = await fetchAllInOneQuery(sbr);
+    timing.cteMs = Date.now() - t1;
+    timing.totalMs = Date.now() - t0;
+    timing.path = "cte";
     if (allIssues.length > 0) {
-      // Linked issues are included in the CTE result (via LATERAL FLATTEN on issuelinks).
-      // No extra round-trips needed — return all as parentsRaw.
-      console.log(`[snowflake] CTE: ${allIssues.length} total issues (hierarchy + linked) for ${sbr}`);
-      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [] };
+      console.log(`[snowflake] CTE: ${allIssues.length} issues in ${timing.cteMs}ms`);
+      return { parentsRaw: allIssues, combinedRaw: [], walkRaw: [], expandedRaw: [], timing };
     }
+    console.warn(`[snowflake] CTE returned 0 issues for ${sbr}, falling back to serial scan`);
   } catch (cteErr) {
-    console.warn(`[snowflake] single-query CTE failed: ${cteErr.message}, falling back to 4-layer scan`);
+    console.warn(`[snowflake] CTE failed: ${cteErr.message}, falling back to serial scan`);
   }
 
-  // Slow path: 4-layer serial scan (last resort)
+  // Slow path: serial scan — last resort only
+  console.warn(`[snowflake] Using slow serial scan for ${sbr}`);
+  const t2 = Date.now();
   const parentsRaw = await fetchMnacSeed(sbr);
+  timing.seedMs = Date.now() - t2;
   const seenKeys = new Set();
   for (const issue of parentsRaw) if (issue.key) seenKeys.add(issue.key);
   const linkTargets = collectLinkTargetKeys(parentsRaw, seenKeys);
+  const t3 = Date.now();
   const combinedRaw = await fetchByKeys(linkTargets);
+  timing.combineMs = Date.now() - t3;
   for (const issue of combinedRaw) if (issue.key) seenKeys.add(issue.key);
+  const t4 = Date.now();
   const walkRaw = await fetchParentWalk([...seenKeys], seenKeys);
+  timing.walkMs = Date.now() - t4;
+  const t5 = Date.now();
   const expandedRaw = await fetchLinkExpansion([parentsRaw, combinedRaw, walkRaw], seenKeys);
-  return { parentsRaw, combinedRaw, walkRaw, expandedRaw };
+  timing.linkExpansionMs = Date.now() - t5;
+  timing.totalMs = Date.now() - t0;
+  timing.path = "serial-scan";
+  return { parentsRaw, combinedRaw, walkRaw, expandedRaw, timing };
 }
 
 async function probeMnacIssueCount(sbr = "SBR-356") {

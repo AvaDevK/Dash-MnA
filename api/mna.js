@@ -196,6 +196,7 @@ async function buildUniverse(sbr = "SBR-356") {
       risks: ["all", "blocked", "gap", "zero"],
     },
     extractionTelemetry: buildExtractionTelemetry(initiatives),
+    snowflakeTiming: layers?.timing ?? null,
     repoHealth,
   };
 }
