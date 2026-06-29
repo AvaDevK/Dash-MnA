@@ -6,10 +6,9 @@ const { queryRows, hasSnowflakeCredentials } = require("./snowflakeClient");
 const { EXCLUDED_KEYS } = require("./types");
 
 const ISSUES_TABLE = `${env.snowflakeDatabase}.${env.snowflakeSchema}.ISSUES`;
-// Pre-materialized Dynamic Table — dedicated DASH_MNA schema in ENGOPERATIONS_PROD_MART.
-// Segregated from V2's PUBLIC schema. Refreshes every 15 min via Snowflake scheduler.
-// Created by: scripts/create-dynamic-table.sql
-const DYNAMIC_TABLE = `ENGOPERATIONS_PROD_MART.DASH_MNA.SBR_HIERARCHY_CACHE`;
+// View in DEV mart — same schema, created in ENGOPERATIONS_DEV_MART while awaiting PROD grant.
+// Once PROD grant is available, swap back to ENGOPERATIONS_PROD_MART.DASH_MNA.SBR_HIERARCHY_CACHE
+const DYNAMIC_TABLE = `ENGOPERATIONS_DEV_MART.DASH_MNA.SBR_HIERARCHY_CACHE`;
 
 const PARENT_WALK_MAX_DEPTH = 5;
 const LINK_EXPANSION_MAX_BATCHES = 5;
