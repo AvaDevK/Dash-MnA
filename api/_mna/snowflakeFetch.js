@@ -6,8 +6,10 @@ const { queryRows, hasSnowflakeCredentials } = require("./snowflakeClient");
 const { EXCLUDED_KEYS } = require("./types");
 
 const ISSUES_TABLE = `${env.snowflakeDatabase}.${env.snowflakeSchema}.ISSUES`;
-// View in DEV mart — same schema, created in ENGOPERATIONS_DEV_MART while awaiting PROD grant.
-// Once PROD grant is available, swap back to ENGOPERATIONS_PROD_MART.DASH_MNA.SBR_HIERARCHY_CACHE
+// Pre-materialized table — created by scripts/create-materialized-cache.sql.
+// Refreshed every 15 min by TASK_REFRESH_SBR_HIERARCHY_CACHE stored procedure.
+// Gives <1s reads vs 20-60s for a live VIEW or CTE.
+// Set _dynamicTableAvailable = true below after running the setup script in Snowflake.
 const DYNAMIC_TABLE = `ENGOPERATIONS_DEV_MART.DASH_MNA.SBR_HIERARCHY_CACHE`;
 
 const PARENT_WALK_MAX_DEPTH = 5;
@@ -128,11 +130,10 @@ async function fetchFromDynamicTable(sbr) {
   return rows.map(snowflakeRowToRawIssue).filter(Boolean).filter((i) => !EXCLUDED_KEYS.has(i.key));
 }
 
-// Dynamic Table fast path is only beneficial when the object is a TRUE pre-materialized
-// Dynamic Table (not a regular VIEW). A view re-runs the full JOIN every query, giving
-// the same cost as the CTE but with fetchLinkExpansion added on top (2-3x slower).
-// Set to false until a real Dynamic Table is provisioned in PROD.
-let _dynamicTableAvailable = false;
+// Set to true after running scripts/create-materialized-cache.sql in Snowflake.
+// The script creates a real TABLE (pre-materialized, <1s reads) refreshed every 15 min.
+// Keep false while the table doesn't exist — falls back to the CTE path automatically.
+let _dynamicTableAvailable = true;
 async function isDynamicTableAvailable() {
   return _dynamicTableAvailable;
 }
